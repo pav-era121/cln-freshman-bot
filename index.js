@@ -10,8 +10,27 @@ const port = process.env.PORT || 3000;
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// Global Telegraf error handling
+bot.catch((err, ctx) => {
+  console.error(`⚠️ Telegraf error on ${ctx?.updateType}:`, err.message);
+});
+
+// Process-level resilience against network resets (ECONNRESET, ETIMEDOUT)
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Network / Unhandled Rejection:', (reason && reason.message) || reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Uncaught Exception:', (err && err.message) || err);
+});
+
 const WEBAPP_URL =
-  process.env.WEBAPP_URL || 'https://cln-freshmen.vercel.app/';
+  process.env.WEBAPP_URL || 'https://cln-freshman-frontend.vercel.app/';
+
+const getWebAppUrl = () => {
+  const base = WEBAPP_URL.endsWith('/') ? WEBAPP_URL : `${WEBAPP_URL}/`;
+  return `${base}?_v=${Date.now()}`;
+};
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -100,7 +119,8 @@ async function getAnnouncements() {
       target_audience,
       image_url
     `)
-    .eq('is_published', true);
+    .eq('is_published', true)
+    .neq('category', 'system_course');
 
   if (error) {
     console.error('❌ Supabase error:', error);
@@ -237,49 +257,49 @@ function splitMessage(text, maxLength) {
 // START
 // ============================================================
 
-bot.command('start', (ctx) => {
-  console.log(
-    'Start command received from:',
-    ctx.from.username || ctx.from.id
-  );
+bot.command('start', async (ctx) => {
+  const username = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Student');
+  console.log(`Start command received from: ${username} (${ctx.from?.id})`);
 
-  const welcomeMessage = `👋 Welcome to Our Bot!
+  const welcomeMessage = `👋 Welcome to <b>CLN Freshman</b>, ${escapeHtml(username)}! 🎓
 
-We're excited to have you here. Click the button below to explore our powerful web app.
+Your all-in-one portal for Ethiopian university freshman courses, lecture notes, and quizzes.
 
-✨ Features include:
-• Interactive dashboard
-• Real-time updates
-• Announcements`;
+✨ <b>Highlights</b>:
+• 📚 Video, PDF & Interactive Quizzes
+• 🏆 Real-time Freshman Leaderboard & Streaks
+• 📢 Campus Announcements & Academic Updates
+• 👑 Premium Course Access Requests`;
 
-  ctx.reply(welcomeMessage, {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: '🚀 Open Web App',
-            web_app: {
-              url: WEBAPP_URL
+  try {
+    await ctx.reply(welcomeMessage, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '🚀 Open Web App',
+              web_app: {
+                url: getWebAppUrl()
+              }
             }
-          }
-        ],
-        [
-          {
-            text: '📢 Announcements',
-            callback_data: 'announcements'
-          }
-        ],
-        [
-          {
-            text: '❓ Help',
-            callback_data: 'help'
-          }
+          ],
+          [
+            {
+              text: '📢 Announcements',
+              callback_data: 'announcements'
+            },
+            {
+              text: '❓ Help',
+              callback_data: 'help'
+            }
+          ]
         ]
-      ]
-    }
-  }).catch(err => {
-    console.error('Error sending start message:', err);
-  });
+      }
+    });
+  } catch (err) {
+    console.error('Error sending start message:', err.message);
+  }
 });
 
 // ============================================================
@@ -400,39 +420,41 @@ bot.command('echo', (ctx) => {
 // OPEN WEB APP
 // ============================================================
 
-bot.command('open', (ctx) => {
-  ctx.reply(
-    'Click the button below to open the web app:',
+const sendOpenWebAppMessage = (ctx) => {
+  return ctx.reply(
+    '🎓 <b>CLN Freshman Web App</b>\n\nTap the button below to launch the portal, browse freshman courses, past exam papers, lecture notes, and quizzes:',
     {
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
           [
             {
               text: '🚀 Open Web App',
               web_app: {
-                url: WEBAPP_URL
-              }
-            }
-          ]
-        ]
-      }
+                url: getWebAppUrl(),
+              },
+            },
+          ],
+        ],
+      },
     }
   );
-});
+};
+
+bot.command('open', sendOpenWebAppMessage);
+bot.command('courses', sendOpenWebAppMessage);
+bot.command('app', sendOpenWebAppMessage);
+bot.hears(['open', 'Open', 'app', 'App', 'courses', 'Courses', 'start', 'Start', 'hi', 'hello', 'Hi', 'Hello'], sendOpenWebAppMessage);
 
 // ============================================================
-// HANDLE TEXT
+// HANDLE TEXT (FALLBACK)
 // ============================================================
 
 bot.on('text', (ctx) => {
-  // Don't respond to commands here
   if (ctx.message.text.startsWith('/')) {
     return;
   }
-
-  ctx.reply(
-    `You said: ${ctx.message.text}`
-  );
+  return sendOpenWebAppMessage(ctx);
 });
 
 // ============================================================
@@ -452,6 +474,39 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// Direct API notification trigger for Admin Approval
+app.post('/api/notify-approval', async (req, res) => {
+  const { telegramId, courseTitle } = req.body;
+  if (!telegramId) {
+    return res.status(400).json({ error: 'Missing telegramId' });
+  }
+
+  try {
+    await bot.telegram.sendMessage(
+      telegramId,
+      `🎉 *Course Access Approved!*\n\nYour request to access *${courseTitle || 'your course'}* has been approved by the CLN Admin.\n\nYou now have full access to all lectures, lecture handouts, and quizzes. Happy learning! 🎓`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: '🚀 Open Course in Web App',
+                web_app: { url: getWebAppUrl() },
+              },
+            ],
+          ],
+        },
+      }
+    );
+    console.log(`✅ Sent approval notification to student Telegram ID: ${telegramId}`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('⚠️ Could not send Telegram DM to user:', err.message);
+    return res.json({ success: false, reason: err.message });
+  }
+});
+
 // Health check endpoint
 app.get('/', (req, res) => {
   res.send('Bot is running!');
@@ -465,7 +520,14 @@ if (process.env.NODE_ENV !== 'production') {
   app.listen(port, () => {
     console.log(`Bot running on port ${port}`);
 
-    bot.launch();
-    console.log('Bot started with polling');
+    if (process.env.BOT_TOKEN && process.env.BOT_TOKEN !== 'your_telegram_bot_token_here') {
+      bot.launch().then(() => {
+        console.log('🤖 Telegram Bot started with polling!');
+      }).catch((err) => {
+        console.error('❌ Failed to launch bot polling:', err.message);
+      });
+    } else {
+      console.log('⚠️ BOT_TOKEN is not configured yet. Get a token from @BotFather on Telegram and place it in Bot/.env to enable polling.');
+    }
   });
 }
