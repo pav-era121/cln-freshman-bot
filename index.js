@@ -261,6 +261,15 @@ bot.command('start', async (ctx) => {
   const username = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Student');
   console.log(`Start command received from: ${username} (${ctx.from?.id})`);
 
+  // Force-update the user's persistent bottom Telegram menu button to the live app
+  ctx.setChatMenuButton({
+    type: 'web_app',
+    text: '🚀 Open Web App',
+    web_app: {
+      url: 'https://cln-freshman-frontend.vercel.app/'
+    }
+  }).catch((err) => console.warn('Could not set chat menu button:', err.message));
+
   const welcomeMessage = `👋 Welcome to <b>CLN Freshman</b>, ${escapeHtml(username)}! 🎓
 
 Your all-in-one portal for Ethiopian university freshman courses, lecture notes, and quizzes.
@@ -421,6 +430,14 @@ bot.command('echo', (ctx) => {
 // ============================================================
 
 const sendOpenWebAppMessage = (ctx) => {
+  ctx.setChatMenuButton({
+    type: 'web_app',
+    text: '🚀 Open Web App',
+    web_app: {
+      url: 'https://cln-freshman-frontend.vercel.app/'
+    }
+  }).catch(() => {});
+
   return ctx.reply(
     '🎓 <b>CLN Freshman Web App</b>\n\nTap the button below to launch the portal, browse freshman courses, past exam papers, lecture notes, and quizzes:',
     {
@@ -521,11 +538,18 @@ if (process.env.NODE_ENV !== 'production') {
     console.log(`Bot running on port ${port}`);
 
     if (process.env.BOT_TOKEN && process.env.BOT_TOKEN !== 'your_telegram_bot_token_here') {
-      bot.launch().then(() => {
-        console.log('🤖 Telegram Bot started with polling!');
-      }).catch((err) => {
-        console.error('❌ Failed to launch bot polling:', err.message);
-      });
+      const startPolling = () => {
+        bot.launch({ dropPendingUpdates: true })
+          .then(() => {
+            console.log('🤖 Telegram Bot polling ended');
+          })
+          .catch((err) => {
+            console.error('❌ Polling error, auto-retrying in 3s:', err.message);
+            setTimeout(startPolling, 3000);
+          });
+      };
+      startPolling();
+      console.log('🤖 Telegram Bot started with polling!');
     } else {
       console.log('⚠️ BOT_TOKEN is not configured yet. Get a token from @BotFather on Telegram and place it in Bot/.env to enable polling.');
     }
