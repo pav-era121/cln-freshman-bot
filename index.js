@@ -48,6 +48,118 @@ const supabase = createClient(
   SUPABASE_KEY
 );
 
+async function recordUserActivity(from) {
+  if (!from || !from.id) return;
+  const telegramId = from.id;
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+
+  try {
+    // 1. Update/upsert users table with last_accessed_at
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id, access_count, last_accessed_at')
+      .eq('telegram_id', telegramId)
+      .maybeSingle();
+
+    if (existingUser) {
+      await supabase
+        .from('users')
+        .update({
+          last_accessed_at: now.toISOString(),
+          first_name: from.first_name || '',
+          last_name: from.last_name || '',
+          username: from.username || '',
+          access_count: (existingUser.access_count || 0) + 1
+        })
+        .eq('id', existingUser.id);
+    } else {
+      await supabase
+        .from('users')
+        .insert({
+          telegram_id: telegramId,
+          first_name: from.first_name || '',
+          last_name: from.last_name || '',
+          username: from.username || '',
+          language_code: from.language_code || 'en',
+          is_premium: Boolean(from.is_premium),
+          first_accessed_at: now.toISOString(),
+          last_accessed_at: now.toISOString(),
+          access_count: 1
+        });
+    }
+
+    // 2. Sync cloud stats streak in announcements
+    const docTitle = `user_stats_${telegramId}`;
+    const { data: cloudRow } = await supabase
+      .from('announcements')
+      .select('id, content')
+      .eq('category', 'system_user_stats')
+      .eq('title', docTitle)
+      .maybeSingle();
+
+    let stats = {
+      telegram_id: telegramId,
+      streak: 1,
+      lastDate: today,
+      history: [today],
+      xp: 50,
+      level: 1,
+      completedCourses: 0,
+      completedCourseIds: [],
+      completedLessons: []
+    };
+
+    if (cloudRow?.content) {
+      try {
+        const parsed = JSON.parse(cloudRow.content);
+        stats = { ...stats, ...parsed };
+      } catch (_) {}
+    }
+
+    if (stats.lastDate === today) {
+      // already recorded today
+    } else if (stats.lastDate === yesterday) {
+      stats.streak = (stats.streak || 1) + 1;
+      stats.lastDate = today;
+      stats.history = Array.from(new Set([...(stats.history || []), today]));
+      stats.xp = Math.max(stats.xp, stats.streak * 50);
+      stats.level = Math.floor(stats.xp / 100) + 1;
+    } else {
+      stats.streak = 1;
+      stats.lastDate = today;
+      stats.history = Array.from(new Set([...(stats.history || []), today]));
+    }
+
+    const json = JSON.stringify(stats);
+    if (cloudRow?.id) {
+      await supabase
+        .from('announcements')
+        .update({ content: json, updated_at: now.toISOString() })
+        .eq('id', cloudRow.id);
+    } else {
+      await supabase
+        .from('announcements')
+        .insert({
+          title: docTitle,
+          content: json,
+          category: 'system_user_stats',
+          is_published: false
+        });
+    }
+  } catch (err) {
+    console.warn('Could not record user activity in Bot:', err.message);
+  }
+}
+
+bot.use(async (ctx, next) => {
+  if (ctx.from) {
+    recordUserActivity(ctx.from).catch(() => {});
+  }
+  return next();
+});
+
 function makeHashtag(value) {
   if (!value) return '';
 
