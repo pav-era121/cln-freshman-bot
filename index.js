@@ -301,25 +301,23 @@ const getPricingMessage = () => `🎓 <b>CLN FRESHMAN — PACKAGES & PRICING</b>
 💰 <b>የክፍያ ጥቅሎች እና የዋጋ ዝርዝር</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-1️⃣ 📝 <b>CLN Freshman Prep (ጥያቄ ልምምድ)</b>
-<i>Practice 100s of freshman exam questions with detailed answers:</i>
-• <b>Solo Semester Pass (1 ተማሪ)</b>: <b>380 Birr</b> <s>(600 Birr)</s>
-  - 1-semester full access to all questions, solutions & Sunday Arena.
-• <b>Dorm Squad Deal (4 ተማሪዎች)</b>: <b>1,200 Birr</b>
-  - 300 ETB / student (Save 320 ETB!)
-• <b>Floor / Section Deal (8 ተማሪዎች)</b>: <b>2,000 Birr</b>
-  - 250 ETB / student (Save 1,040 ETB!)
-
-2️⃣ 🚀 <b>CLN Courses Web App (ቪዲዮና ማጠቃለያ ኖቶች)</b>
+1️⃣ 🚀 <b>CLN Courses Web App (ቪዲዮ እና ኖቶች)</b>
 <i>Structured video lectures, PDF chapter notes, and progress tracking:</i>
 • <b>Full Semester Pass (All Courses)</b>: <b>320 Birr</b> <s>(500 Birr)</s>
-• <b>Single Course Pass</b>: <b>120 Birr</b> per course
+  - Unlocks Chapter 2, 3, 4+ across <b>EVERY freshman course</b>!
+  - <i>Note: Chapter 1 of all courses is 100% Free to sample!</i>
 
-3️⃣ 👑 <b>ULTIMATE VIP COMBO (ሁለቱንም አንድ ላይ — BEST VALUE!)</b>
+2️⃣ 👑 <b>VIP COMBO PASS (ሁለቱንም አንድ ላይ — BEST VALUE!)</b>
 🔥 <b>Courses Web App + Question Prep Bundle:</b>
 • <b>Solo VIP Combo (1 ተማሪ)</b>: <b>500 Birr</b> <s>(700 Birr)</s> — <b>Save 200 ETB!</b>
-  - Full 1-Semester access to <b>BOTH</b> the Web App & Question Prep!
+  - Full Semester access to <b>BOTH</b> the Web App & Question Prep website!
 • <b>Dorm Squad Combo (4 ተማሪዎች)</b>: <b>1,600 Birr</b> (400 ETB / student)
+
+3️⃣ 📝 <b>CLN Freshman Prep (ጥያቄ ልምምድ ብቻ)</b>
+<i>Practice 100s of freshman exam questions with detailed answers:</i>
+• <b>Solo Semester Pass (1 ተማሪ)</b>: <b>380 Birr</b> <s>(600 Birr)</s>
+• <b>Dorm Squad Deal (4 ተማሪዎች)</b>: <b>1,200 Birr</b> (300 ETB / student)
+• <b>Floor / Section Deal (8 ተማሪዎች)</b>: <b>2,000 Birr</b> (250 ETB / student)
 
 ━━━━━━━━━━━━━━━━━━━━
 🏦 <b>የክፍያ አማራጮች (Payment Methods):</b>
@@ -328,18 +326,20 @@ const getPricingMessage = () => `🎓 <b>CLN FRESHMAN — PACKAGES & PRICING</b>
 <i>(Account Name: CLN Academy / CLN Educational Platform)</i>
 
 📩 <b>How to Activate / ማግበሪያ መንገድ:</b>
-ክፍያ ከፈጸሙ በኋላ የከፈሉበትን ደረሰኝ (Screenshot) በቀጥታ ለቴሌግራም አድሚን ይላኩ:
-👉 <b>@${ADMIN_USERNAME}</b>`;
+ክፍያ ከፈጸሙ በኋላ የከፈሉበትን ደረሰኝ (Screenshot) በቀጥታ ለቴሌግራም አድሚን ብቻ ይላኩ:
+👉 <b>@${ADMIN_USERNAME}</b>
+
+<i>(የከፈሉበትን ደረሰኝ ሲልኩ የተመዘገቡበትን ስም እና ስልክ ቁጥር አብረው ይላኩ፤ አድሚኑ ወዲያውኑ አካውንትዎን ፕሪሚየም ያደርግልዎታል)</i>`;
 
 const getRegisterMessage = () => `💳 <b>HOW TO REGISTER & ACTIVATE ACCESS</b>
 📝 <b>እንዴት መመዝገብ እና አካውንት ማግበር ይቻላል?</b>
 ━━━━━━━━━━━━━━━━━━━━
 
 <b>Step 1 / ደረጃ 1: Select Your Package (ጥቅልዎን ይምረጡ)</b>
-• <b>Solo Prep (380 ETB)</b> — Question practice only
-• <b>Web App Full Pass (320 ETB)</b> — Lectures & notes
-• <b>VIP Combo (500 ETB)</b> — Both Web App + Prep (Best Value!)
-• <b>Group Deals (1,200 ETB or 2,000 ETB)</b> — For dorm roommates & sections
+• <b>Web App Full Semester Pass (320 ETB)</b> — All Courses & Notes
+• <b>VIP Combo Pass (500 ETB)</b> — Both Web App + Question Prep (Best Value!)
+• <b>Solo Question Prep (380 ETB)</b> — Question practice only
+• <b>Group Deals (1,200 ETB or 1,600 ETB)</b> — For dorm roommates
 
 <b>Step 2 / ደረጃ 2: Make Payment (ክፍያ ይፈጽሙ)</b>
 Use either Telebirr or CBE:
@@ -350,13 +350,13 @@ Use either Telebirr or CBE:
 After payment, send your transaction screenshot directly to our admin:
 👉 <b>@${ADMIN_USERNAME}</b>
 
-Include the following info:
+Include:
 1. Receipt Screenshot (የክፍያ ደረሰኝ ምስል)
-2. Chosen Package Name (የመረጡት ጥቅል ስም)
-3. Your Telegram Username or Phone number
+2. Chosen Package Name (የመረጡት ጥቅል)
+3. Your Registered Full Name & Phone Number
 
 <b>Step 4 / ደረጃ 4: Instant Activation! (ፈጣን ማረጋገጫ)</b>
-The admin will immediately unlock your access and you can start studying right away! 🎓`;
+The admin will immediately unlock your access to all courses! 🎓`;
 
 const getAboutMessage = () => `💡 <b>WHAT IS CLN FRESHMAN TUTOR?</b>
 ስለ CLN ፍሬሽማን ትምህርታዊ ፕላትፎርም
