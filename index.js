@@ -399,9 +399,17 @@ Your all-in-one portal for Ethiopian university freshman courses, lecture notes,
         inline_keyboard: [
           [
             {
-              text: '🚀 Open Web App',
+              text: '🚀 Open Courses & Notes',
               web_app: {
                 url: getWebAppUrl()
+              }
+            }
+          ],
+          [
+            {
+              text: '📝 Question Practice (CLN Prep)',
+              web_app: {
+                url: 'https://cln-freshman-prep.vercel.app/'
               }
             }
           ],
@@ -433,12 +441,12 @@ bot.action('help', async (ctx) => {
   await ctx.reply(
     `Available commands:
 
-/start - Start the bot
-/help - Show this help
-/ping - Check if bot is alive
-/echo <text> - Echo your message
-/open - Open the web app
-/announcements - View published announcements`
+/start - Start the bot & view main menu
+/prep - 📝 Question practice & exam prep portal
+/open - 🚀 Open CLN Freshman Courses Web App
+/announcements - View published campus announcements
+/help - Show this help message
+/ping - Check bot response`
   );
 });
 
@@ -493,6 +501,40 @@ bot.action('announcements', async (ctx) => {
 });
 
 // ============================================================
+// PREP & QUESTION PRACTICE
+// ============================================================
+
+bot.command(['prep', 'practice', 'questions'], async (ctx) => {
+  const prepMessage = `🎯 <b>CLN Freshman Question Practice & Exam Prep</b>\n\nSharpen your knowledge with hundreds of curated freshman exam questions, chapter quizzes, and model tests.\n\n👉 <b>Website:</b> https://cln-freshman-prep.vercel.app/\n\nTap below to start practicing immediately:`;
+
+  try {
+    await ctx.reply(prepMessage, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '📝 Open Question Practice',
+              web_app: {
+                url: 'https://cln-freshman-prep.vercel.app/'
+              }
+            }
+          ],
+          [
+            {
+              text: '🌐 Open in External Browser',
+              url: 'https://cln-freshman-prep.vercel.app/'
+            }
+          ]
+        ]
+      }
+    });
+  } catch (err) {
+    console.error('Error sending prep message:', err.message);
+  }
+});
+
+// ============================================================
 // HELP
 // ============================================================
 
@@ -500,12 +542,12 @@ bot.command('help', (ctx) => {
   ctx.reply(
     `Available commands:
 
-/start - Start the bot
-/help - Show this help
-/ping - Check if bot is alive
-/echo <text> - Echo your message
-/open - Open the web app
-/announcements - View published announcements`
+/start - Start the bot & view main menu
+/prep - 📝 Question practice & exam prep portal
+/open - 🚀 Open CLN Freshman Courses Web App
+/announcements - View published campus announcements
+/help - Show this help message
+/ping - Check bot response`
   );
 });
 
@@ -635,6 +677,15 @@ app.post('/api/notify-approval', async (req, res) => {
     return res.json({ success: false, reason: err.message });
   }
 });
+
+// Register persistent Telegram bot commands
+bot.telegram.setMyCommands([
+  { command: 'start', description: 'Start the bot & view main menu' },
+  { command: 'open', description: '🚀 Open CLN Freshman Courses App' },
+  { command: 'prep', description: '📝 Question practice & exam prep' },
+  { command: 'announcements', description: '📢 View published announcements' },
+  { command: 'help', description: '❓ How to use this bot' },
+]).catch(err => console.warn('Could not setMyCommands:', err.message));
 
 // Health check endpoint
 app.get('/', (req, res) => {
