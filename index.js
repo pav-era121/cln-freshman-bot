@@ -398,7 +398,7 @@ const getWebAppGuideMessage = () => `📱 <b>HOW TO USE THE COURSES WEB APP</b>
    Go to the <b>Courses</b> tab. You will see Psychology, English, Physics, Geography, Logic, and more. Filter by <i>"In Progress"</i>, <i>"Not Started"</i>, or <i>"Completed"</i>.
 
 3. <b>Studying Chapters:</b>
-   Tap any course to view its curriculum. Each chapter contains structured video lessons, downloadable PDF handouts, and chapter review quizzes.
+   Tap any course to view its curriculum. Each chapter contains structured video lessons, in-app protected PDF handouts & study notes, and chapter review quizzes.
 
 4. <b>Maintaining Your Day Streak:</b>
    Open the app and study daily to keep your streak alive! The more consecutive days you learn, the higher your multiplier.
@@ -665,10 +665,7 @@ bot.command(['prep', 'practice', 'questions'], async (ctx) => {
               web_app: { url: PREP_URL }
             }
           ],
-          [
-            { text: '🌐 Open in External Browser', url: PREP_URL }
-          ],
-          [
+                    [
             { text: '💰 View Prep Packages', callback_data: 'pricing' },
             { text: '📖 How to Use', callback_data: 'guide_prep' }
           ]
