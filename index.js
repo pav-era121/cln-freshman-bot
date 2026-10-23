@@ -15,7 +15,7 @@ bot.catch((err, ctx) => {
   console.error(`⚠️ Telegraf error on ${ctx?.updateType}:`, err.message);
 });
 
-// Process-level resilience against network resets (ECONNRESET, ETIMEDOUT)
+// Process-level resilience against network resets
 process.on('unhandledRejection', (reason) => {
   console.error('⚠️ Network / Unhandled Rejection:', (reason && reason.message) || reason);
 });
@@ -26,6 +26,11 @@ process.on('uncaughtException', (err) => {
 
 const WEBAPP_URL =
   process.env.WEBAPP_URL || 'https://cln-freshman-frontend.vercel.app/';
+
+const PREP_URL = 'https://cln-freshman-prep.vercel.app/';
+const GROUP_URL = 'https://t.me/CLNfreshman444';
+const ADMIN_USERNAME = 'CLN_AAU_Admin';
+const ADMIN_URL = 'https://t.me/CLN_AAU_Admin';
 
 const getWebAppUrl = () => {
   const base = WEBAPP_URL.endsWith('/') ? WEBAPP_URL : `${WEBAPP_URL}/`;
@@ -47,6 +52,14 @@ const supabase = createClient(
   SUPABASE_URL,
   SUPABASE_KEY
 );
+
+// Escape HTML for Telegram
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 async function recordUserActivity(from) {
   if (!from || !from.id) return;
@@ -162,52 +175,25 @@ bot.use(async (ctx, next) => {
 
 function makeHashtag(value) {
   if (!value) return '';
-
-  return (
-    '#' +
-    String(value)
-      .trim()
-      .replace(/[^a-zA-Z0-9_]+/g, '')
-  );
+  return '#' + String(value).trim().replace(/[^a-zA-Z0-9_]+/g, '');
 }
 
 function formatDate(date) {
   if (!date) return '';
-
   return new Date(date).toLocaleString('en-US', {
     dateStyle: 'medium',
     timeStyle: 'short'
   });
 }
 
-// Format one announcement for Telegram
 function formatAnnouncement(announcement) {
   const category = makeHashtag(announcement.category);
   const priority = makeHashtag(announcement.priority);
-
-  const hashtags = [category, priority]
-    .filter(Boolean)
-    .join(' ');
-
-  const pinned = announcement.is_pinned
-    ? '📌 PINNED\n\n'
-    : '';
-
+  const hashtags = [category, priority].filter(Boolean).join(' ');
+  const pinned = announcement.is_pinned ? '📌 PINNED\n\n' : '';
   const createdDate = formatDate(announcement.created_at);
-  return `${pinned}📢 <b>${escapeHtml(announcement.title || 'Announcement')}</b>
 
-${escapeHtml(announcement.content || '')}
-
-${hashtags}
-🕒 ${createdDate}`;
-}
-
-// Escape HTML for Telegram
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return `${pinned}📢 <b>${escapeHtml(announcement.title || 'Announcement')}</b>\n\n${escapeHtml(announcement.content || '')}\n\n${hashtags}\n🕒 ${createdDate}`;
 }
 
 async function getAnnouncements() {
@@ -240,140 +226,248 @@ async function getAnnouncements() {
   }
 
   const announcements = data || [];
-
   announcements.sort((a, b) => {
     const dateA = new Date(a.published_at || a.created_at);
     const dateB = new Date(b.published_at || b.created_at);
-
     return dateA.getTime() - dateB.getTime();
   });
 
   return announcements;
 }
 
-bot.command('announcements', async (ctx) => {
-  try {
-    console.log(
-      'Announcements requested by:',
-      ctx.from.username || ctx.from.id
-    );
-
-    await ctx.reply('📢 Fetching announcements...');
-
-    const announcements = await getAnnouncements();
-
-    if (announcements.length === 0) {
-      await ctx.reply(
-        '📭 There are no published announcements right now.'
-      );
-      return;
-    }
-
-    for (const announcement of announcements) {
-      const message = formatAnnouncement(announcement);
-      if (message.length <= 4096) {
-let sentMessage;
-
-if (announcement.image_url) {
-  sentMessage = await ctx.replyWithPhoto(
-    {
-      url: announcement.image_url
-    },
-    {
-      caption: message,
-      parse_mode: 'HTML'
-    }
-  );
-} else {
-  sentMessage = await ctx.reply(message, {
-    parse_mode: 'HTML',
-    disable_web_page_preview: true
-  });
-}
-
-        if (announcement.is_pinned) {
-          try {
-            await ctx.telegram.pinChatMessage(
-              ctx.chat.id,
-              sentMessage.message_id,
-              {
-                disable_notification: true
-              }
-            );
-
-            console.log(
-              `📌 Pinned announcement ${announcement.id}`
-            );
-          } catch (pinError) {
-            console.error(
-              `⚠️ Could not pin announcement ${announcement.id}:`,
-              pinError.message
-            );
-          }
-        }
-      } else {
-        const chunks = splitMessage(message, 4096);
-
-        let firstMessage = null;
-
-        for (const chunk of chunks) {
-          const sentMessage = await ctx.reply(chunk, {
-            parse_mode: 'HTML',
-            disable_web_page_preview: true
-          });
-
-          if (!firstMessage) {
-            firstMessage = sentMessage;
-          }
-        }
-
-        if (announcement.is_pinned && firstMessage) {
-          try {
-            await ctx.telegram.pinChatMessage(
-              ctx.chat.id,
-              firstMessage.message_id,
-              {
-                disable_notification: true
-              }
-            );
-          } catch (pinError) {
-            console.error(
-              '⚠️ Could not pin long announcement:',
-              pinError.message
-            );
-          }
-        }
-      }
-    }
-
-  } catch (error) {
-    console.error('❌ Error fetching announcements:', error);
-
-    await ctx.reply(
-      '❌ Sorry, I could not fetch the announcements right now.'
-    );
-  }
-});
-
+// Split long text
 function splitMessage(text, maxLength) {
   const chunks = [];
-
   for (let i = 0; i < text.length; i += maxLength) {
     chunks.push(text.substring(i, i + maxLength));
   }
-
   return chunks;
 }
 
 // ============================================================
-// START
+// CONTENT TEMPLATES (BILINGUAL: ENGLISH + AMHARIC)
+// ============================================================
+
+const getStartMessage = (username) => `👋 Welcome to <b>CLN Freshman Tutor</b>, ${escapeHtml(username)}! 🎓
+እንኳን ወደ CLN Freshman Bot በደህና መጡ!
+
+Your #1 all-in-one academic companion for Ethiopian University Freshmen.
+የኢትዮጵያ ዩኒቨርሲቲ የፍሬሽማን ተማሪዎች የትምህርትና ፈተና ዝግጅት ማዕከል።
+
+✨ <b>What we offer / የምንሰጣቸው አገልግሎቶች:</b>
+• 📚 <b>Courses Web App</b>: Video lectures, summary PDF notes & chapter quizzes
+• 📝 <b>Question Practice (Prep)</b>: Hundreds of midterm & final model exam questions
+• 🏆 <b>Daily Streaks & Leaderboard</b>: Study consistently & track your ranking
+• 👥 <b>Freshman Community</b>: Connect with students nationwide in @CLNfreshman444
+
+👇 <b>Tap an option below to start / ከታች ካሉት ይምረጡ:</b>`;
+
+const getStartKeyboard = () => ({
+  inline_keyboard: [
+    [
+      {
+        text: '🚀 Open Courses Web App',
+        web_app: { url: getWebAppUrl() }
+      }
+    ],
+    [
+      {
+        text: '📝 Open Question Practice (CLN Prep)',
+        web_app: { url: PREP_URL }
+      }
+    ],
+    [
+      { text: '💰 Packages & Prices', callback_data: 'pricing' },
+      { text: '💳 How to Register', callback_data: 'register' }
+    ],
+    [
+      { text: '📖 How to Use (Guides)', callback_data: 'guides' },
+      { text: '❓ FAQ', callback_data: 'faq' }
+    ],
+    [
+      {
+        text: '👥 Join Discussion Group (@CLNfreshman444)',
+        url: GROUP_URL
+      }
+    ],
+    [
+      { text: '💡 What is CLN?', callback_data: 'about' },
+      { text: '📢 Announcements', callback_data: 'announcements' }
+    ]
+  ]
+});
+
+const getPricingMessage = () => `🎓 <b>CLN FRESHMAN — PACKAGES & PRICING</b>
+💰 <b>የክፍያ ጥቅሎች እና የዋጋ ዝርዝር</b>
+━━━━━━━━━━━━━━━━━━━━
+
+1️⃣ 📝 <b>CLN Freshman Prep (ጥያቄ ልምምድ)</b>
+<i>Practice 100s of freshman exam questions with detailed answers:</i>
+• <b>Solo Semester Pass (1 ተማሪ)</b>: <b>380 Birr</b> <s>(600 Birr)</s>
+  - 1-semester full access to all questions, solutions & Sunday Arena.
+• <b>Dorm Squad Deal (4 ተማሪዎች)</b>: <b>1,200 Birr</b>
+  - 300 ETB / student (Save 320 ETB!)
+• <b>Floor / Section Deal (8 ተማሪዎች)</b>: <b>2,000 Birr</b>
+  - 250 ETB / student (Save 1,040 ETB!)
+
+2️⃣ 🚀 <b>CLN Courses Web App (ቪዲዮና ማጠቃለያ ኖቶች)</b>
+<i>Structured video lectures, PDF chapter notes, and progress tracking:</i>
+• <b>Full Semester Pass (All Courses)</b>: <b>320 Birr</b> <s>(500 Birr)</s>
+• <b>Single Course Pass</b>: <b>120 Birr</b> per course
+
+3️⃣ 👑 <b>ULTIMATE VIP COMBO (ሁለቱንም አንድ ላይ — BEST VALUE!)</b>
+🔥 <b>Courses Web App + Question Prep Bundle:</b>
+• <b>Solo VIP Combo (1 ተማሪ)</b>: <b>500 Birr</b> <s>(700 Birr)</s> — <b>Save 200 ETB!</b>
+  - Full 1-Semester access to <b>BOTH</b> the Web App & Question Prep!
+• <b>Dorm Squad Combo (4 ተማሪዎች)</b>: <b>1,600 Birr</b> (400 ETB / student)
+
+━━━━━━━━━━━━━━━━━━━━
+🏦 <b>የክፍያ አማራጮች (Payment Methods):</b>
+• <b>ንግድ ባንክ (CBE)</b>: <code>1000253063452</code>
+• <b>ቴሌብር (Telebirr)</b>: <code>0950113361</code>
+<i>(Account Name: CLN Academy / CLN Educational Platform)</i>
+
+📩 <b>How to Activate / ማግበሪያ መንገድ:</b>
+ክፍያ ከፈጸሙ በኋላ የከፈሉበትን ደረሰኝ (Screenshot) በቀጥታ ለቴሌግራም አድሚን ይላኩ:
+👉 <b>@${ADMIN_USERNAME}</b>`;
+
+const getRegisterMessage = () => `💳 <b>HOW TO REGISTER & ACTIVATE ACCESS</b>
+📝 <b>እንዴት መመዝገብ እና አካውንት ማግበር ይቻላል?</b>
+━━━━━━━━━━━━━━━━━━━━
+
+<b>Step 1 / ደረጃ 1: Select Your Package (ጥቅልዎን ይምረጡ)</b>
+• <b>Solo Prep (380 ETB)</b> — Question practice only
+• <b>Web App Full Pass (320 ETB)</b> — Lectures & notes
+• <b>VIP Combo (500 ETB)</b> — Both Web App + Prep (Best Value!)
+• <b>Group Deals (1,200 ETB or 2,000 ETB)</b> — For dorm roommates & sections
+
+<b>Step 2 / ደረጃ 2: Make Payment (ክፍያ ይፈጽሙ)</b>
+Use either Telebirr or CBE:
+• <b>CBE (ንግድ ባንክ)</b>: <code>1000253063452</code>
+• <b>Telebirr (ቴሌብር)</b>: <code>0950113361</code>
+
+<b>Step 3 / ደረጃ 3: Send Screenshot to Admin (ደረሰኝ ይላኩ)</b>
+After payment, send your transaction screenshot directly to our admin:
+👉 <b>@${ADMIN_USERNAME}</b>
+
+Include the following info:
+1. Receipt Screenshot (የክፍያ ደረሰኝ ምስል)
+2. Chosen Package Name (የመረጡት ጥቅል ስም)
+3. Your Telegram Username or Phone number
+
+<b>Step 4 / ደረጃ 4: Instant Activation! (ፈጣን ማረጋገጫ)</b>
+The admin will immediately unlock your access and you can start studying right away! 🎓`;
+
+const getAboutMessage = () => `💡 <b>WHAT IS CLN FRESHMAN TUTOR?</b>
+ስለ CLN ፍሬሽማን ትምህርታዊ ፕላትፎርም
+━━━━━━━━━━━━━━━━━━━━
+
+<b>CLN Freshman</b> is Ethiopia’s premier digital learning platform dedicated to helping university freshman students pass their midterms and finals with top grades (4.0 GPA goal!).
+
+🌟 <b>Why University Students Rely on CLN:</b>
+• <b>100% Curriculum-Aligned</b>: Tailored strictly to the latest Ethiopian Ministry of Education university freshman syllabus.
+• <b>Top-Scoring Tutors</b>: Simplified explanations of challenging concepts.
+• <b>Bilingual Support</b>: Concepts broken down in clear English with Amharic explanations.
+• <b>Core Freshman Subjects Covered</b>:
+  1. 🧠 General Psychology
+  2. 📖 Communicative English Language Skills
+  3. ⚛️ General Physics (PHYS 1011)
+  4. 🗺️ Geography of Ethiopia and the Horn
+  5. 💡 Logic & Critical Thinking
+  6. 📐 Mathematics for Natural / Social Science
+
+🚀 <b>Two Integrated Platforms:</b>
+1. <b>Courses Web App</b>: Video lectures, summary handouts, and daily streak tracking.
+2. <b>CLN Freshman Prep</b>: Hundreds of exam questions with instant step-by-step explanations and Sunday Arena.`;
+
+const getGuidesMessage = () => `📖 <b>CLN USER GUIDES & HOW-TO</b>
+የአጠቃቀም መመሪያዎች
+━━━━━━━━━━━━━━━━━━━━
+
+Choose which platform you want to learn how to use:
+የየትኛውን አጠቃቀም ማወቅ ይፈልጋሉ?`;
+
+const getWebAppGuideMessage = () => `📱 <b>HOW TO USE THE COURSES WEB APP</b>
+የቪዲዮ እና ኖት ዌብ አፕ አጠቃቀም መመሪያ
+━━━━━━━━━━━━━━━━━━━━
+
+1. <b>Launching the App:</b>
+   Tap the <b>"🚀 Open Courses Web App"</b> button in this bot. It runs smoothly inside Telegram!
+
+2. <b>Browsing Courses:</b>
+   Go to the <b>Courses</b> tab. You will see Psychology, English, Physics, Geography, Logic, and more. Filter by <i>"In Progress"</i>, <i>"Not Started"</i>, or <i>"Completed"</i>.
+
+3. <b>Studying Chapters:</b>
+   Tap any course to view its curriculum. Each chapter contains structured video lessons, downloadable PDF handouts, and chapter review quizzes.
+
+4. <b>Maintaining Your Day Streak:</b>
+   Open the app and study daily to keep your streak alive! The more consecutive days you learn, the higher your multiplier.
+
+5. <b>Freshman Leaderboard:</b>
+   Earn XP for completing lessons and quizzes. Compete against students from all Ethiopian universities on the <b>Leaderboard</b>!`;
+
+const getPrepGuideMessage = () => `🎯 <b>HOW TO USE CLN FRESHMAN PREP (QUESTIONS)</b>
+የጥያቄ ልምምድ ድረገጽ አጠቃቀም መመሪያ
+━━━━━━━━━━━━━━━━━━━━
+
+👉 <b>Website:</b> https://cln-freshman-prep.vercel.app/
+
+1. <b>Accessing Questions:</b>
+   Open the link in Telegram or your browser. No heavy downloads required.
+
+2. <b>Filtering by Subject & Chapter:</b>
+   Select any subject (e.g. Physics, Logic, Psychology) and choose the specific chapter you want to practice.
+
+3. <b>Instant Explanations:</b>
+   Answer each question and immediately view the full explanation showing why the answer is correct and where the trick was.
+
+4. <b>Sunday Arena:</b>
+   Participate in weekly timed model exams to test your speed and readiness before official university exams!`;
+
+const getCommunityMessage = () => `👥 <b>CLN FRESHMAN COMMUNITY & SUPPORT</b>
+የተማሪዎች ማህበረሰብ እና ድጋፍ
+━━━━━━━━━━━━━━━━━━━━
+
+Join thousands of Ethiopian university freshmen across AAU, ASTU, AASTU, Jimma, Hawassa, Bahir Dar, Haramaya, and all universities:
+
+📢 <b>Official Telegram Group:</b>
+👉 <b>@CLNfreshman444</b>
+• Share academic resources & past exam papers
+• Discuss difficult lecture topics with peers
+• Stay updated on exam schedules & campus news
+
+💬 <b>Official Admin & Payment Support:</b>
+👉 <b>@${ADMIN_USERNAME}</b>
+• Send payment screenshots for instant activation
+• Inquire about group package discounts
+• Technical help and feedback`;
+
+const getFaqMessage = () => `❓ <b>FREQUENTLY ASKED QUESTIONS (FAQ)</b>
+ተደጋጋሚ ጥያቄዎች እና መልሶች
+━━━━━━━━━━━━━━━━━━━━
+
+<b>Q1: Is CLN updated for the current academic year?</b>
+✅ Yes! All video lectures, notes, and question banks match the latest Ethiopian university curriculum.
+
+<b>Q2: Are there free trial contents?</b>
+✅ Absolutely! Both the Web App and Question Prep offer free sample previews and chapters so you can try before subscribing.
+
+<b>Q3: How long does payment activation take?</b>
+✅ Once you send your receipt screenshot to <b>@${ADMIN_USERNAME}</b>, your account is typically activated within 5 to 15 minutes!
+
+<b>Q4: Can I use CLN on both my phone and laptop?</b>
+✅ Yes! The Web App works inside Telegram on Android & iOS, and the Question Practice site works on any phone, tablet, or laptop browser.
+
+<b>Q5: How do group discounts work?</b>
+✅ If you team up with dorm roommates (4 students) or section mates (8 students), you can get up to <b>37% to 45% discount</b>! Send your group's details to <b>@${ADMIN_USERNAME}</b>.`;
+
+// ============================================================
+// START COMMAND
 // ============================================================
 
 bot.command('start', async (ctx) => {
   const username = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Student');
-  console.log(`Start command received from: ${username} (${ctx.from?.id})`);
 
-  // Force-update the user's persistent bottom Telegram menu button to the live app
   ctx.setChatMenuButton({
     type: 'web_app',
     text: '🚀 Open Web App',
@@ -382,49 +476,10 @@ bot.command('start', async (ctx) => {
     }
   }).catch((err) => console.warn('Could not set chat menu button:', err.message));
 
-  const welcomeMessage = `👋 Welcome to <b>CLN Freshman</b>, ${escapeHtml(username)}! 🎓
-
-Your all-in-one portal for Ethiopian university freshman courses, lecture notes, and quizzes.
-
-✨ <b>Highlights</b>:
-• 📚 Video, PDF & Interactive Quizzes
-• 🏆 Real-time Freshman Leaderboard & Streaks
-• 📢 Campus Announcements & Academic Updates
-• 👑 Premium Course Access Requests`;
-
   try {
-    await ctx.reply(welcomeMessage, {
+    await ctx.reply(getStartMessage(username), {
       parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '🚀 Open Courses & Notes',
-              web_app: {
-                url: getWebAppUrl()
-              }
-            }
-          ],
-          [
-            {
-              text: '📝 Question Practice (CLN Prep)',
-              web_app: {
-                url: 'https://cln-freshman-prep.vercel.app/'
-              }
-            }
-          ],
-          [
-            {
-              text: '📢 Announcements',
-              callback_data: 'announcements'
-            },
-            {
-              text: '❓ Help',
-              callback_data: 'help'
-            }
-          ]
-        ]
-      }
+      reply_markup: getStartKeyboard()
     });
   } catch (err) {
     console.error('Error sending start message:', err.message);
@@ -432,157 +487,137 @@ Your all-in-one portal for Ethiopian university freshman courses, lecture notes,
 });
 
 // ============================================================
-// CALLBACK QUERIES
+// CORE BOT COMMANDS
 // ============================================================
 
-bot.action('help', async (ctx) => {
-  await ctx.answerCbQuery();
-
-  await ctx.reply(
-    `Available commands:
-
-/start - Start the bot & view main menu
-/prep - 📝 Question practice & exam prep portal
-/open - 🚀 Open CLN Freshman Courses Web App
-/announcements - View published campus announcements
-/help - Show this help message
-/ping - Check bot response`
-  );
-});
-
-bot.action('announcements', async (ctx) => {
-  await ctx.answerCbQuery();
-
-  try {
-    const announcements = await getAnnouncements();
-
-    if (announcements.length === 0) {
-      await ctx.reply(
-        '📭 There are no published announcements right now.'
-      );
-      return;
-    }
-
-    for (const announcement of announcements) {
-      const message = formatAnnouncement(announcement);
-
-      if (message.length <= 4096) {
-        const sentMessage = await ctx.reply(message, {
-          parse_mode: 'HTML',
-          disable_web_page_preview: true
-        });
-
-        if (announcement.is_pinned) {
-          try {
-            await ctx.telegram.pinChatMessage(
-              ctx.chat.id,
-              sentMessage.message_id,
-              {
-                disable_notification: true
-              }
-            );
-          } catch (pinError) {
-            console.error(
-              'Could not pin announcement:',
-              pinError.message
-            );
-          }
-        }
-      }
-    }
-
-  } catch (error) {
-    console.error(error);
-
-    await ctx.reply(
-      '❌ Could not load announcements.'
-    );
-  }
-});
-
-// ============================================================
-// PREP & QUESTION PRACTICE
-// ============================================================
-
-bot.command(['prep', 'practice', 'questions'], async (ctx) => {
-  const prepMessage = `🎯 <b>CLN Freshman Question Practice & Exam Prep</b>\n\nSharpen your knowledge with hundreds of curated freshman exam questions, chapter quizzes, and model tests.\n\n👉 <b>Website:</b> https://cln-freshman-prep.vercel.app/\n\nTap below to start practicing immediately:`;
-
-  try {
-    await ctx.reply(prepMessage, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '📝 Open Question Practice',
-              web_app: {
-                url: 'https://cln-freshman-prep.vercel.app/'
-              }
-            }
-          ],
-          [
-            {
-              text: '🌐 Open in External Browser',
-              url: 'https://cln-freshman-prep.vercel.app/'
-            }
-          ]
+// Pricing & Packages
+bot.command(['pricing', 'packages', 'price', 'payment'], async (ctx) => {
+  await ctx.reply(getPricingMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💳 How to Register / ምዝገባ', callback_data: 'register' },
+          { text: '💬 Send Receipt to Admin', url: ADMIN_URL }
+        ],
+        [
+          { text: '🚀 Open Web App', web_app: { url: getWebAppUrl() } },
+          { text: '📝 Open Prep', web_app: { url: PREP_URL } }
+        ],
+        [
+          { text: '🔙 Back to Menu', callback_data: 'main_menu' }
         ]
-      }
-    });
-  } catch (err) {
-    console.error('Error sending prep message:', err.message);
-  }
+      ]
+    }
+  });
 });
 
-// ============================================================
-// HELP
-// ============================================================
-
-bot.command('help', (ctx) => {
-  ctx.reply(
-    `Available commands:
-
-/start - Start the bot & view main menu
-/prep - 📝 Question practice & exam prep portal
-/open - 🚀 Open CLN Freshman Courses Web App
-/announcements - View published campus announcements
-/help - Show this help message
-/ping - Check bot response`
-  );
+// Registration
+bot.command(['register', 'registration', 'enroll'], async (ctx) => {
+  await ctx.reply(getRegisterMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💬 Send Receipt to @' + ADMIN_USERNAME, url: ADMIN_URL }
+        ],
+        [
+          { text: '💰 View Packages & Prices', callback_data: 'pricing' },
+          { text: '👥 Join Group @CLNfreshman444', url: GROUP_URL }
+        ],
+        [
+          { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+        ]
+      ]
+    }
+  });
 });
 
-// ============================================================
-// PING
-// ============================================================
-
-bot.command('ping', (ctx) => {
-  ctx.reply('Pong! 🏓');
+// About CLN
+bot.command(['about', 'whatiscln'], async (ctx) => {
+  await ctx.reply(getAboutMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🚀 Open Web App', web_app: { url: getWebAppUrl() } },
+          { text: '📝 Open Prep', web_app: { url: PREP_URL } }
+        ],
+        [
+          { text: '💰 Packages & Prices', callback_data: 'pricing' },
+          { text: '👥 Join @CLNfreshman444', url: GROUP_URL }
+        ],
+        [
+          { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+        ]
+      ]
+    }
+  });
 });
 
-// ============================================================
-// ECHO
-// ============================================================
-
-bot.command('echo', (ctx) => {
-  const text = ctx.message.text
-    .split(' ')
-    .slice(1)
-    .join(' ');
-
-  if (!text) {
-    ctx.reply(
-      'Please provide text to echo. Example: /echo Hello World'
-    );
-    return;
-  }
-
-  ctx.reply(text);
+// Community / Group
+bot.command(['community', 'group', 'channel'], async (ctx) => {
+  await ctx.reply(getCommunityMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '👥 Join @CLNfreshman444 Group', url: GROUP_URL }
+        ],
+        [
+          { text: '💬 Message Admin @' + ADMIN_USERNAME, url: ADMIN_URL }
+        ],
+        [
+          { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+        ]
+      ]
+    }
+  });
 });
 
-// ============================================================
-// OPEN WEB APP
-// ============================================================
+// FAQ
+bot.command('faq', async (ctx) => {
+  await ctx.reply(getFaqMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💰 View Packages', callback_data: 'pricing' },
+          { text: '💳 How to Register', callback_data: 'register' }
+        ],
+        [
+          { text: '💬 Ask Question to Admin', url: ADMIN_URL },
+          { text: '👥 Join Group', url: GROUP_URL }
+        ],
+        [
+          { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+        ]
+      ]
+    }
+  });
+});
 
+// Guides
+bot.command(['guide', 'guides', 'howto'], async (ctx) => {
+  await ctx.reply(getGuidesMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '📱 How to Use Courses Web App', callback_data: 'guide_webapp' }
+        ],
+        [
+          { text: '🎯 How to Use Question Prep', callback_data: 'guide_prep' }
+        ],
+        [
+          { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+        ]
+      ]
+    }
+  });
+});
+
+// Open Web App
 const sendOpenWebAppMessage = (ctx) => {
   ctx.setChatMenuButton({
     type: 'web_app',
@@ -593,7 +628,7 @@ const sendOpenWebAppMessage = (ctx) => {
   }).catch(() => {});
 
   return ctx.reply(
-    '🎓 <b>CLN Freshman Web App</b>\n\nTap the button below to launch the portal, browse freshman courses, past exam papers, lecture notes, and quizzes:',
+    `🎓 <b>CLN Freshman Courses & Notes Web App</b>\n\nTap below to explore freshman courses, summary lecture notes, and quizzes:`,
     {
       parse_mode: 'HTML',
       reply_markup: {
@@ -601,26 +636,461 @@ const sendOpenWebAppMessage = (ctx) => {
           [
             {
               text: '🚀 Open Web App',
-              web_app: {
-                url: getWebAppUrl(),
-              },
-            },
+              web_app: { url: getWebAppUrl() }
+            }
           ],
-        ],
-      },
+          [
+            { text: '📖 How to Use', callback_data: 'guide_webapp' },
+            { text: '💰 Packages', callback_data: 'pricing' }
+          ]
+        ]
+      }
     }
   );
 };
 
-bot.command('open', sendOpenWebAppMessage);
-bot.command('courses', sendOpenWebAppMessage);
-bot.command('app', sendOpenWebAppMessage);
-bot.hears(['open', 'Open', 'app', 'App', 'courses', 'Courses', 'start', 'Start', 'hi', 'hello', 'Hi', 'Hello'], sendOpenWebAppMessage);
+bot.command(['open', 'app', 'courses'], sendOpenWebAppMessage);
+
+// Question Practice
+bot.command(['prep', 'practice', 'questions'], async (ctx) => {
+  await ctx.reply(
+    `🎯 <b>CLN Freshman Question Practice & Exam Prep</b>\n\nSharpen your knowledge with hundreds of curated freshman exam questions, chapter quizzes, and model tests.\n\n👉 <b>Website:</b> ${PREP_URL}\n\nTap below to start practicing:`,
+    {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: '📝 Open Question Practice',
+              web_app: { url: PREP_URL }
+            }
+          ],
+          [
+            { text: '🌐 Open in External Browser', url: PREP_URL }
+          ],
+          [
+            { text: '💰 View Prep Packages', callback_data: 'pricing' },
+            { text: '📖 How to Use', callback_data: 'guide_prep' }
+          ]
+        ]
+      }
+    }
+  );
+});
+
+// Help command
+bot.command('help', async (ctx) => {
+  const helpText = `ℹ️ <b>CLN Freshman Bot Commands / የቦቱ ማውጫ</b>:
+━━━━━━━━━━━━━━━━━━━━
+
+/start - 🏠 Main Interactive Portal & Menu
+/open - 🚀 Open Courses Web App (Videos & Notes)
+/prep - 📝 Open Question Practice (CLN Prep)
+/pricing - 💰 Packages, Pricing & Bank Details
+/register - 💳 Step-by-Step Registration Guide
+/guide - 📖 Guides on how to use both platforms
+/faq - ❓ Frequently Asked Questions
+/community - 👥 Official Student Group (@CLNfreshman444)
+/about - 💡 What is CLN Freshman?
+/announcements - 📢 Published Campus Announcements
+/ping - 🏓 Check bot connection`;
+
+  await ctx.reply(helpText, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '🚀 Open Web App', web_app: { url: getWebAppUrl() } },
+          { text: '📝 Question Practice', web_app: { url: PREP_URL } }
+        ],
+        [
+          { text: '💰 Packages', callback_data: 'pricing' },
+          { text: '💳 Register', callback_data: 'register' }
+        ],
+        [
+          { text: '👥 Join @CLNfreshman444', url: GROUP_URL }
+        ]
+      ]
+    }
+  });
+});
+
+bot.command('ping', (ctx) => {
+  ctx.reply('Pong! 🏓 Bot is active and running.');
+});
 
 // ============================================================
-// HANDLE TEXT (FALLBACK)
+// ANNOUNCEMENTS
 // ============================================================
 
+bot.command('announcements', async (ctx) => {
+  try {
+    await ctx.reply('📢 Fetching announcements...');
+    const announcements = await getAnnouncements();
+
+    if (announcements.length === 0) {
+      await ctx.reply('📭 There are no published announcements right now.');
+      return;
+    }
+
+    for (const announcement of announcements) {
+      const message = formatAnnouncement(announcement);
+      if (message.length <= 4096) {
+        if (announcement.image_url) {
+          await ctx.replyWithPhoto(
+            { url: announcement.image_url },
+            { caption: message, parse_mode: 'HTML' }
+          );
+        } else {
+          await ctx.reply(message, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+          });
+        }
+      } else {
+        const chunks = splitMessage(message, 4096);
+        for (const chunk of chunks) {
+          await ctx.reply(chunk, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error fetching announcements:', error);
+    await ctx.reply('❌ Sorry, I could not fetch announcements right now.');
+  }
+});
+
+// ============================================================
+// CALLBACK QUERY HANDLERS (SEAMLESS INLINE INTERACTION)
+// ============================================================
+
+bot.action('main_menu', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const username = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Student');
+  try {
+    await ctx.editMessageText(getStartMessage(username), {
+      parse_mode: 'HTML',
+      reply_markup: getStartKeyboard()
+    });
+  } catch (_) {
+    await ctx.reply(getStartMessage(username), {
+      parse_mode: 'HTML',
+      reply_markup: getStartKeyboard()
+    });
+  }
+});
+
+bot.action('pricing', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '💳 How to Register / ምዝገባ', callback_data: 'register' },
+        { text: '💬 Send Receipt to Admin', url: ADMIN_URL }
+      ],
+      [
+        { text: '🚀 Open Web App', web_app: { url: getWebAppUrl() } },
+        { text: '📝 Open Prep', web_app: { url: PREP_URL } }
+      ],
+      [
+        { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getPricingMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getPricingMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('register', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '💬 Send Receipt to @' + ADMIN_USERNAME, url: ADMIN_URL }
+      ],
+      [
+        { text: '💰 View Packages & Prices', callback_data: 'pricing' },
+        { text: '👥 Join Group @CLNfreshman444', url: GROUP_URL }
+      ],
+      [
+        { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getRegisterMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getRegisterMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('about', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '🚀 Open Web App', web_app: { url: getWebAppUrl() } },
+        { text: '📝 Open Prep', web_app: { url: PREP_URL } }
+      ],
+      [
+        { text: '💰 Packages & Prices', callback_data: 'pricing' },
+        { text: '👥 Join @CLNfreshman444', url: GROUP_URL }
+      ],
+      [
+        { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getAboutMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getAboutMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('community', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '👥 Join @CLNfreshman444 Group', url: GROUP_URL }
+      ],
+      [
+        { text: '💬 Message Admin @' + ADMIN_USERNAME, url: ADMIN_URL }
+      ],
+      [
+        { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getCommunityMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getCommunityMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('faq', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '💰 View Packages', callback_data: 'pricing' },
+        { text: '💳 How to Register', callback_data: 'register' }
+      ],
+      [
+        { text: '💬 Ask Question to Admin', url: ADMIN_URL },
+        { text: '👥 Join Group', url: GROUP_URL }
+      ],
+      [
+        { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getFaqMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getFaqMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('guides', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '📱 How to Use Courses Web App', callback_data: 'guide_webapp' }
+      ],
+      [
+        { text: '🎯 How to Use Question Prep', callback_data: 'guide_prep' }
+      ],
+      [
+        { text: '🔙 Back to Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getGuidesMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getGuidesMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('guide_webapp', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '🚀 Launch Web App Now', web_app: { url: getWebAppUrl() } }
+      ],
+      [
+        { text: '🎯 How to Use Question Prep', callback_data: 'guide_prep' },
+        { text: '💰 View Packages', callback_data: 'pricing' }
+      ],
+      [
+        { text: '🔙 Guides Menu', callback_data: 'guides' },
+        { text: '🏠 Main Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getWebAppGuideMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getWebAppGuideMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('guide_prep', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  const markup = {
+    inline_keyboard: [
+      [
+        { text: '📝 Launch Question Practice', web_app: { url: PREP_URL } }
+      ],
+      [
+        { text: '📱 How to Use Web App', callback_data: 'guide_webapp' },
+        { text: '💰 View Packages', callback_data: 'pricing' }
+      ],
+      [
+        { text: '🔙 Guides Menu', callback_data: 'guides' },
+        { text: '🏠 Main Menu', callback_data: 'main_menu' }
+      ]
+    ]
+  };
+
+  try {
+    await ctx.editMessageText(getPrepGuideMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  } catch (_) {
+    await ctx.reply(getPrepGuideMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: markup
+    });
+  }
+});
+
+bot.action('announcements', async (ctx) => {
+  await ctx.answerCbQuery().catch(() => {});
+  try {
+    const announcements = await getAnnouncements();
+    if (announcements.length === 0) {
+      await ctx.reply('📭 There are no published announcements right now.');
+      return;
+    }
+    for (const announcement of announcements) {
+      const message = formatAnnouncement(announcement);
+      if (message.length <= 4096) {
+        await ctx.reply(message, { parse_mode: 'HTML', disable_web_page_preview: true });
+      }
+    }
+  } catch (error) {
+    console.error(error);
+    await ctx.reply('❌ Could not load announcements.');
+  }
+});
+
+// Text listener for friendly keyword replies
+bot.hears(['help', 'Help', 'faq', 'FAQ', 'question', 'questions'], (ctx) => {
+  ctx.reply(getFaqMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💰 Packages', callback_data: 'pricing' },
+          { text: '💳 Register', callback_data: 'register' }
+        ],
+        [
+          { text: '👥 Group @CLNfreshman444', url: GROUP_URL },
+          { text: '💬 Admin Support', url: ADMIN_URL }
+        ]
+      ]
+    }
+  });
+});
+
+bot.hears(['price', 'pricing', 'package', 'packages', 'pay', 'payment', 'ዋጋ', 'ክፍያ'], (ctx) => {
+  ctx.reply(getPricingMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💳 How to Register / ምዝገባ', callback_data: 'register' },
+          { text: '💬 Send Receipt to Admin', url: ADMIN_URL }
+        ]
+      ]
+    }
+  });
+});
+
+bot.hears(['group', 'community', 'channel', 'ግሩፕ'], (ctx) => {
+  ctx.reply(getCommunityMessage(), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '👥 Join @CLNfreshman444 Group', url: GROUP_URL }]
+      ]
+    }
+  });
+});
+
+// Fallback message
 bot.on('text', (ctx) => {
   if (ctx.message.text.startsWith('/')) {
     return;
@@ -629,7 +1099,7 @@ bot.on('text', (ctx) => {
 });
 
 // ============================================================
-// WEBHOOK
+// WEBHOOK & ADMIN API
 // ============================================================
 
 app.use(express.json());
@@ -655,9 +1125,9 @@ app.post('/api/notify-approval', async (req, res) => {
   try {
     await bot.telegram.sendMessage(
       telegramId,
-      `🎉 *Course Access Approved!*\n\nYour request to access *${courseTitle || 'your course'}* has been approved by the CLN Admin.\n\nYou now have full access to all lectures, lecture handouts, and quizzes. Happy learning! 🎓`,
+      `🎉 <b>Course Access Approved! / አካውንትዎ ነፃ ሆኗል!</b>\n\nYour access to <b>${escapeHtml(courseTitle || 'your course')}</b> has been activated by the CLN Admin.\n\nYou now have full access to all lectures, lecture handouts, and quizzes. Happy learning! 🎓`,
       {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
             [
@@ -666,6 +1136,12 @@ app.post('/api/notify-approval', async (req, res) => {
                 web_app: { url: getWebAppUrl() },
               },
             ],
+            [
+              {
+                text: '📝 Practice Questions',
+                web_app: { url: PREP_URL },
+              }
+            ]
           ],
         },
       }
@@ -678,18 +1154,24 @@ app.post('/api/notify-approval', async (req, res) => {
   }
 });
 
-// Register persistent Telegram bot commands
+// Register persistent Telegram bot commands menu
 bot.telegram.setMyCommands([
-  { command: 'start', description: 'Start the bot & view main menu' },
-  { command: 'open', description: '🚀 Open CLN Freshman Courses App' },
-  { command: 'prep', description: '📝 Question practice & exam prep' },
-  { command: 'announcements', description: '📢 View published announcements' },
-  { command: 'help', description: '❓ How to use this bot' },
+  { command: 'start', description: '🏠 Main Portal & Menu / ዋና ማውጫ' },
+  { command: 'open', description: '🚀 Open Courses Web App' },
+  { command: 'prep', description: '📝 Question Practice Portal (Prep)' },
+  { command: 'pricing', description: '💰 Packages & Prices / የዋጋ ዝርዝር' },
+  { command: 'register', description: '💳 How to Register / ምዝገባ' },
+  { command: 'guide', description: '📖 User Guides / የአጠቃቀም መመሪያ' },
+  { command: 'faq', description: '❓ FAQ / ተደጋጋሚ ጥያቄዎች' },
+  { command: 'community', description: '👥 Group (@CLNfreshman444)' },
+  { command: 'about', description: '💡 What is CLN? / ስለ CLN' },
+  { command: 'announcements', description: '📢 Campus Announcements' },
+  { command: 'help', description: 'ℹ️ Bot Commands & Help' },
 ]).catch(err => console.warn('Could not setMyCommands:', err.message));
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.send('Bot is running!');
+  res.send('CLN Freshman Bot is running smoothly!');
 });
 
 // Export app for Vercel
