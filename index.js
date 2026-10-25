@@ -702,21 +702,28 @@ bot.command('start', async (ctx) => {
     });
   }
 
-  // If user connected bot from WebApp sync prompt or 1-tap connect
-  if (payload === 'webapp_sync' || payload === 'sync' || payload === 'from_webapp') {
+  // If user connected bot from WebApp sync prompt, 1-tap connect, or mandatory gatekeeper
+  if (
+    payload === 'webapp_sync' ||
+    payload === 'sync' ||
+    payload === 'from_webapp' ||
+    payload === 'verify_app' ||
+    payload === 'verify' ||
+    payload === 'mandatory_auth'
+  ) {
     return ctx.reply(
       `🎉 <b>CLN Bot Connected Successfully, ${escapeHtml(username)}! / ቦቱ በተሳካ ሁኔታ ተገናኝቷል!</b> 🎓✨\n\n` +
-      `Your account is now synced with <b>CLN Freshman Tutor</b>. You will receive:\n` +
+      `Your account is verified and synced with <b>CLN Freshman Tutor</b>. You will receive:\n` +
       `• 🔔 Daily quiz & GPA study streak reminders\n` +
       `• 📚 Important course notes & model exam drops\n` +
       `• 🏆 Weekly Leaderboard ranking updates\n\n` +
-      `👇 <b>Tap below to return to your courses:</b>`,
+      `👇 <b>Tap below to launch your courses:</b>`,
       {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '🚀 Return to Web App', web_app: { url: getWebAppUrl() } }
+              { text: '🚀 Open CLN Courses Web App', web_app: { url: getWebAppUrl() } }
             ],
             [
               { text: '📝 Question Practice (Prep)', web_app: { url: PREP_URL } },
