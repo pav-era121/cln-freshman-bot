@@ -29,9 +29,88 @@ const WEBAPP_URL =
 
 const PREP_URL = 'https://cln-freshman-prep.vercel.app/';
 const GROUP_URL = 'https://t.me/CLNfreshman444';
+const GROUP_CHAT_ID = '-1003782574747'; // Verified Supergroup ID for @CLNfreshman444
 const ADMIN_USERNAME = 'CLN_AAU_Admin';
 const ADMIN_URL = 'https://t.me/CLN_AAU_Admin';
-const ADMIN_TELEGRAM_IDS = [5572599116, 6348965963];
+const PAM_TELEGRAM_ID = 5572599116; // Verified Owner PAM (@PAKMNJB) - EXCLUSIVE BROADCAST & AD PERMISSION
+
+const DEFAULT_DAILY_AD = `🔥 <b>STUDY SMARTER, NOT HARDER FOR YOUR FRESHMAN EXAMS! / በብልሃት አጥንተው ከፍተኛ GPA ያስመዝግቡ!</b> 🎓📖
+
+ፈተና ሊደርስ ጥቂት ቀናት ሲቀሩ መጨነቅ ይብቃ! የዩኒቨርሲቲን ፈተና በከፍተኛ ውጤት ለማለፍ የሚያስፈልጉዎትን ኖቶች እና የፈተና ጥያቄዎች በ <b>CLN Freshman Web App</b> ያግኙ።
+
+🌟 <b>ለምን በ CLN Freshman Web App ይጠቀማሉ?</b>
+✅ <b>13 ሙሉ ኮርሶች:</b> Psychology, Physics, Logic, Emerging Technology, Economics, Global Affairs, Entrepreneurship, Math, Anthropology, Physical Fitness & others.
+✅ <b>ምዕራፍ 1 በነፃ (100% FREE):</b> ሳይከፍሉ የሁሉንም ኮርሶች የመጀመሪያ ምዕራፍ ኖቶች ማንበብ ይችላሉ!
+✅ <b>ሞዴል ፈተናዎች ከነማብራሪያቸው:</b> ያለፉት ዓመታት የ Midterm እና Final ፈተናዎች ከተሟላ መልስ ጋር::
+✅ <b>ቀላል እና ፈጣን:</b> ያለምንም መቆራረጥ በስልክዎ ላይ በቀጥታ የሚሰራ::
+
+💡 <i>Join hundreds of freshmen already preparing for their top grades!</i>
+
+👇 <b>ከታች ያለውን ሊንክ በመጫን አሁኑኑ ነፃ ኖቶችን ማንበብ ይጀምሩ:</b>`;
+
+async function getActiveDailyAd() {
+  try {
+    const { data } = await supabase
+      .from('announcements')
+      .select('content')
+      .eq('category', 'system_daily_ad')
+      .eq('title', 'cln_custom_group_ad')
+      .maybeSingle();
+    if (data && data.content && data.content.trim()) {
+      return data.content;
+    }
+  } catch (e) {
+    console.warn('Could not fetch custom daily ad:', e.message);
+  }
+  return DEFAULT_DAILY_AD;
+}
+
+async function setActiveDailyAd(adText) {
+  const { data: existing } = await supabase
+    .from('announcements')
+    .select('id')
+    .eq('category', 'system_daily_ad')
+    .eq('title', 'cln_custom_group_ad')
+    .maybeSingle();
+  if (existing?.id) {
+    await supabase
+      .from('announcements')
+      .update({ content: adText, updated_at: new Date().toISOString() })
+      .eq('id', existing.id);
+  } else {
+    await supabase
+      .from('announcements')
+      .insert({
+        title: 'cln_custom_group_ad',
+        content: adText,
+        category: 'system_daily_ad',
+        is_published: false
+      });
+  }
+}
+
+async function sendDailyAdToGroup() {
+  const adContent = await getActiveDailyAd();
+  const botUsername = bot.botInfo?.username || 'CLNFreshmanCoursesBot';
+  return await bot.telegram.sendMessage(
+    GROUP_CHAT_ID,
+    adContent,
+    {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🚀 Launch CLN Freshman Web App (Free)', url: `https://t.me/${botUsername}?startapp=group_ad` }
+          ],
+          [
+            { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
+          ]
+        ]
+      }
+    }
+  );
+}
 
 const getWebAppUrl = () => {
   const base = WEBAPP_URL.endsWith('/') ? WEBAPP_URL : `${WEBAPP_URL}/`;
@@ -468,6 +547,40 @@ const getFaqMessage = () => `❓ <b>FREQUENTLY ASKED QUESTIONS (FAQ)</b>
 
 <b>Q5: How do group discounts work?</b>
 ✅ If you team up with dorm roommates (4 students) or section mates (8 students), you can get up to <b>37% to 45% discount</b>! Send your group's details to <b>@${ADMIN_USERNAME}</b>.`;
+
+// ============================================================
+// GROUP PRIVACY & CHAT SILENCE MIDDLEWARE
+// ============================================================
+// Requirement: NO ONE can interact with the bot inside the group (@CLNfreshman444).
+// The bot MUST NOT reply to user chatter, commands, or queries inside the group.
+// It only runs automated actions (Welcome new members, post daily ads).
+bot.use(async (ctx, next) => {
+  // 1. Allow new member join events to trigger the Welcome message
+  if (ctx.message?.new_chat_members) {
+    return next();
+  }
+
+  // 2. Check if update is in a group or supergroup
+  const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+  if (isGroup) {
+    const senderId = Number(ctx.from?.id);
+    // If a user types a command in the group
+    if (ctx.message?.text?.startsWith('/')) {
+      // If it is NOT PAM (5572599116), delete the user command message to keep group clean
+      if (senderId !== PAM_TELEGRAM_ID) {
+        ctx.deleteMessage().catch(() => {});
+        return; // Silently abort, do NOT respond
+      }
+      // If PAM typed a command, let it through
+      return next();
+    }
+    // Silently ignore all regular text/replies from students inside the group
+    return;
+  }
+
+  // In private chats, continue normally
+  return next();
+});
 
 // ============================================================
 // START COMMAND
@@ -1096,25 +1209,32 @@ bot.hears(['group', 'community', 'channel', 'ግሩፕ'], (ctx) => {
 });
 
 // ============================================================
-// ADMIN BROADCAST & ADVERTISEMENT COMMANDS (/broadcast, /ad, /announce)
+// PAM EXCLUSIVE BROADCAST & ADVERTISEMENT COMMANDS
 // ============================================================
-bot.command(['broadcast', 'ad', 'announce'], async (ctx) => {
+
+// Command for PAM to broadcast direct Telegram messages to all registered students
+bot.command(['broadcast', 'announce'], async (ctx) => {
   const senderId = Number(ctx.from?.id);
-  if (!ADMIN_TELEGRAM_IDS.includes(senderId)) {
-    return ctx.reply('⛔ <b>Access Denied:</b> This command is restricted to verified CLN Administrators.', {
+  // STRICT VERIFICATION: ONLY PAM (5572599116 / @PAKMNJB)
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ <b>Access Denied:</b> This command is strictly reserved for PAM (@PAKMNJB).', {
       parse_mode: 'HTML',
     });
   }
 
+  if (ctx.chat?.type !== 'private') {
+    return ctx.reply('⚠️ Please send /broadcast in private chat with the bot.', { parse_mode: 'HTML' });
+  }
+
   const fullText = ctx.message.text || '';
-  const messageContent = fullText.replace(/^\/(broadcast|ad|announce)\s*/i, '').trim();
+  const messageContent = fullText.replace(/^\/(broadcast|announce)\s*/i, '').trim();
 
   if (!messageContent) {
     return ctx.reply(
-      `📢 <b>CLN Broadcast & Advertisement System / ማስታወቂያ መላኪያ</b>\n\n` +
-      `Send a broadcast message or advertisement directly to every registered student in the bot database.\n\n` +
+      `📢 <b>CLN Broadcast System / ማስታወቂያ መላኪያ (PAM Only)</b>\n\n` +
+      `Send a direct Telegram DM to every registered student who has used the bot.\n\n` +
       `<b>Usage:</b>\n<code>/broadcast [Your announcement or ad message here]</code>\n\n` +
-      `<b>Example:</b>\n<code>/broadcast 🎉 Big Update! New model exams and chapter notes for Economics, Global Affairs & Emerging Tech are now live on the Web App!</code>\n\n` +
+      `<b>Example:</b>\n<code>/broadcast 🎉 Big Update! New model exams and chapter notes are now live on the Web App!</code>\n\n` +
       `<i>Tip: HTML formatting like &lt;b&gt;bold&lt;/b&gt; and &lt;i&gt;italic&lt;/i&gt; is supported.</i>`,
       { parse_mode: 'HTML' }
     );
@@ -1180,47 +1300,122 @@ bot.command(['broadcast', 'ad', 'announce'], async (ctx) => {
   }
 });
 
+// Command for PAM to customize the daily advertisement message
+bot.command('set_ad', async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied: Only PAM (@PAKMNJB) can customize the group advertisement.', { parse_mode: 'HTML' });
+  }
+
+  const newText = (ctx.message.text || '').replace(/^\/set_ad\s*/i, '').trim();
+  if (!newText) {
+    return ctx.reply(
+      `✍️ <b>Customize Daily Group Advertisement</b>\n\n` +
+      `Set the custom advertisement text that the bot posts daily into the @CLNfreshman444 group.\n\n` +
+      `<b>Usage:</b>\n<code>/set_ad [Your advertisement text here]</code>\n\n` +
+      `<b>Example:</b>\n<code>/set_ad 🔥 Midterm exams are approaching! Access all AAU Freshman Chapter 1 notes for FREE on the CLN Web App!</code>\n\n` +
+      `<i>Tip: HTML tags like &lt;b&gt;bold&lt;/b&gt; and &lt;i&gt;italic&lt;/i&gt; are supported.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  try {
+    await setActiveDailyAd(newText);
+    await ctx.reply(
+      `✅ <b>Daily Group Advertisement Updated!</b>\n\n` +
+      `Preview your new ad with: /view_ad\n` +
+      `Post it immediately to the group with: /post_ad`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    await ctx.reply(`❌ Failed to update ad: ${err.message}`);
+  }
+});
+
+// Command for PAM to preview active advertisement
+bot.command('view_ad', async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
+  }
+  const ad = await getActiveDailyAd();
+  await ctx.reply(
+    `📋 <b>Current Active Group Advertisement:</b>\n\n${ad}\n\n` +
+    `<i>• To change it, type: /set_ad [New Text]\n` +
+    `• To post it now to @CLNfreshman444, type: /post_ad\n` +
+    `• To reset to default, type: /reset_ad</i>`,
+    { parse_mode: 'HTML' }
+  );
+});
+
+// Command for PAM to immediately post the advertisement into the group
+bot.command('post_ad', async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
+  }
+
+  try {
+    await ctx.reply('📡 Posting advertisement to @CLNfreshman444...');
+    await sendDailyAdToGroup();
+    await ctx.reply('✅ <b>Advertisement successfully posted to @CLNfreshman444!</b>', { parse_mode: 'HTML' });
+  } catch (err) {
+    await ctx.reply(`❌ Failed to post ad to group: ${err.message}`);
+  }
+});
+
+// Command for PAM to reset advertisement to default
+bot.command('reset_ad', async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
+  }
+
+  try {
+    await setActiveDailyAd(DEFAULT_DAILY_AD);
+    await ctx.reply('✅ Group advertisement has been reset to the default CLN motivating message!', { parse_mode: 'HTML' });
+  } catch (err) {
+    await ctx.reply(`❌ Failed to reset ad: ${err.message}`);
+  }
+});
+
 // ============================================================
-// GROUP EVENT LISTENERS (@CLNfreshman444)
+// GROUP WELCOME EVENT LISTENER (@CLNfreshman444)
 // ============================================================
+// Welcomes new members warmly and motivates them to launch the Web App
 bot.on('new_chat_members', async (ctx) => {
   try {
     const newMembers = ctx.message.new_chat_members || [];
+    const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
+
     for (const member of newMembers) {
-      if (member.is_bot) {
-        if (member.id === ctx.botInfo?.id) {
-          await ctx.reply(
-            `👋 <b>CLN Freshman Courses Bot is active in this group!</b>\n\n` +
-            `🎓 Welcome everyone! You can access all AAU Freshman course notes, Chapter 1 previews, and model exams right here.\n\n` +
-            `Click below to launch the Web App or view packages:`,
-            {
-              parse_mode: 'HTML',
-              reply_markup: {
-                inline_keyboard: [
-                  [{ text: '🚀 Open Courses Web App', url: `https://t.me/${ctx.botInfo.username}?startapp=group` }],
-                  [{ text: '💰 View Packages & Discounts', url: `https://t.me/${ctx.botInfo.username}?start=pricing` }]
-                ]
-              }
-            }
-          );
-        }
-        continue;
-      }
+      if (member.is_bot) continue;
 
       const name = member.first_name || 'Freshman';
       await ctx.reply(
-        `👋 <b>Welcome to CLN Freshman Community, ${escapeHtml(name)}! / እንኳን ደህና መጡ!</b>\n\n` +
-        `📚 Access all AAU Freshman lecture summaries, Chapter 1 free previews, and model exams directly inside Telegram:`,
+        `👋 <b>Welcome to CLN Freshman Community, ${escapeHtml(name)}! / እንኳን ደህና መጡ!</b> 🎓✨\n\n` +
+        `Are you ready to ace your Freshman year and score a top GPA? 🚀\n\n` +
+        `All your Addis Ababa University (AAU) freshman study materials are organized in one place inside our <b>Telegram Web App</b>:\n\n` +
+        `📚 <b>All 13 Freshman Courses:</b>\n` +
+        `Psychology, Physics, Logic, Emerging Tech, Economics, Global Affairs, Entrepreneurship, Mathematics, Anthropology, and Physical Fitness.\n\n` +
+        `🎁 <b>Chapter 1 is 100% FREE</b> for every single course!\n` +
+        `📝 <b>Midterm & Final Model Exams</b> with complete step-by-step solutions.\n` +
+        `⚡ <b>Study anywhere, anytime</b> directly inside Telegram.\n\n` +
+        `👇 <b>Tap below to open the Web App and claim your free Chapter 1s:</b>`,
         {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🚀 Open Courses Web App', url: `https://t.me/${ctx.botInfo.username}?startapp=welcome` }],
-              [{ text: '💰 Packages & Discounts', url: `https://t.me/${ctx.botInfo.username}?start=pricing` }]
+              [
+                { text: '🚀 Launch Freshman Web App (Free)', url: `https://t.me/${botUsername}?startapp=group_welcome` }
+              ],
+              [
+                { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
+              ]
             ]
           }
         }
-      ).catch(() => {});
+      ).catch((err) => console.warn('Could not send welcome message:', err.message));
     }
   } catch (err) {
     console.warn('Error in new_chat_members:', err.message);
@@ -1341,6 +1536,18 @@ app.post('/api/broadcast', async (req, res) => {
     return res.json({ success: true, sent, failed, total: uniqueIds.length });
   } catch (err) {
     console.error('API Broadcast error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Cron Endpoint for daily automated group advertisement
+app.all('/api/cron-daily-ad', async (req, res) => {
+  try {
+    console.log('⏰ Executing scheduled daily group advertisement to @CLNfreshman444...');
+    await sendDailyAdToGroup();
+    return res.json({ success: true, message: 'Daily advertisement posted to @CLNfreshman444' });
+  } catch (err) {
+    console.error('Error posting scheduled daily ad:', err);
     return res.status(500).json({ error: err.message });
   }
 });
