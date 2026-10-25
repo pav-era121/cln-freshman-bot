@@ -377,6 +377,11 @@ const getAboutMessage = () => `💡 <b>WHAT IS CLN FRESHMAN TUTOR?</b>
   6. 📐 Mathematics for Natural Sciences
   7. 📊 Mathematics for Social Sciences
   8. 🏛️ Social Anthropology (ANTH 1012)
+  9. 🚀 Entrepreneurship
+  10. 🌍 Global Affairs
+  11. 🤖 Introduction to Emerging Technologies
+  12. 📈 Introduction to Economics
+  13. 🏃 Physical Fitness & Conditioning
 
 🚀 <b>Two Integrated Platforms:</b>
 1. <b>Courses Web App</b>: Video lectures, summary handouts, and daily streak tracking.
