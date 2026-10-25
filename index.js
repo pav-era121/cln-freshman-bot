@@ -702,6 +702,35 @@ bot.command('start', async (ctx) => {
     });
   }
 
+  // If user connected bot from WebApp sync prompt or 1-tap connect
+  if (payload === 'webapp_sync' || payload === 'sync' || payload === 'from_webapp') {
+    return ctx.reply(
+      `🎉 <b>CLN Bot Connected Successfully, ${escapeHtml(username)}! / ቦቱ በተሳካ ሁኔታ ተገናኝቷል!</b> 🎓✨\n\n` +
+      `Your account is now synced with <b>CLN Freshman Tutor</b>. You will receive:\n` +
+      `• 🔔 Daily quiz & GPA study streak reminders\n` +
+      `• 📚 Important course notes & model exam drops\n` +
+      `• 🏆 Weekly Leaderboard ranking updates\n\n` +
+      `👇 <b>Tap below to return to your courses:</b>`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🚀 Return to Web App', web_app: { url: getWebAppUrl() } }
+            ],
+            [
+              { text: '📝 Question Practice (Prep)', web_app: { url: PREP_URL } },
+              { text: '💰 View Packages & Discounts', callback_data: 'pricing' }
+            ],
+            [
+              { text: '👥 Freshman Group (@CLNfreshman444)', url: GROUP_URL }
+            ]
+          ]
+        }
+      }
+    );
+  }
+
   // If user tapped "Launch Web App" from group advertisement or welcome message
   if (payload === 'open_app' || payload === 'group_ad' || payload === 'group_welcome' || payload === 'open') {
     return ctx.reply(
