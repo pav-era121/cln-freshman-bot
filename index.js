@@ -472,7 +472,7 @@ bot.command('start', async (ctx) => {
     type: 'web_app',
     text: '🚀 Open Web App',
     web_app: {
-      url: 'https://cln-freshman-frontend.vercel.app/'
+      url: getWebAppUrl()
     }
   }).catch((err) => console.warn('Could not set chat menu button:', err.message));
 
@@ -623,7 +623,7 @@ const sendOpenWebAppMessage = (ctx) => {
     type: 'web_app',
     text: '🚀 Open Web App',
     web_app: {
-      url: 'https://cln-freshman-frontend.vercel.app/'
+      url: getWebAppUrl()
     }
   }).catch(() => {});
 
