@@ -101,7 +101,7 @@ async function sendDailyAdToGroup() {
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '🚀 Launch CLN Freshman Web App (Free)', url: `https://t.me/${botUsername}?startapp=group_ad` }
+            { text: '🚀 Launch CLN Freshman Web App (Free)', url: `https://t.me/${botUsername}?start=open_app` }
           ],
           [
             { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
@@ -588,6 +588,8 @@ bot.use(async (ctx, next) => {
 
 bot.command('start', async (ctx) => {
   const username = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || 'Student');
+  const fullText = ctx.message?.text || '';
+  const payload = fullText.replace(/^\/start\s*/i, '').trim().toLowerCase();
 
   ctx.setChatMenuButton({
     type: 'web_app',
@@ -596,6 +598,54 @@ bot.command('start', async (ctx) => {
       url: getWebAppUrl()
     }
   }).catch((err) => console.warn('Could not set chat menu button:', err.message));
+
+  // If user tapped "View Packages & Discounts" from group
+  if (payload === 'pricing' || payload === 'prices') {
+    return ctx.reply(getPricingMessage(), {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '💳 How to Register / ምዝገባ', callback_data: 'register' },
+            { text: '💬 Send Receipt to Admin', url: ADMIN_URL }
+          ],
+          [
+            { text: '🚀 Open Web App', web_app: { url: getWebAppUrl() } },
+            { text: '📝 Open Prep', web_app: { url: PREP_URL } }
+          ],
+          [
+            { text: '🔙 Main Menu', callback_data: 'main_menu' }
+          ]
+        ]
+      }
+    });
+  }
+
+  // If user tapped "Launch Web App" from group advertisement or welcome message
+  if (payload === 'open_app' || payload === 'group_ad' || payload === 'group_welcome' || payload === 'open') {
+    return ctx.reply(
+      `🎉 <b>Welcome to CLN Freshman Web App, ${escapeHtml(username)}! / እንኳን ደህና መጡ!</b> 🎓\n\n` +
+      `Access all 13 Freshman courses, Chapter 1 free lecture notes, and past model exams right now!\n\n` +
+      `👇 <b>Tap the button below to launch the Web App:</b>`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🚀 Launch Freshman Web App', web_app: { url: getWebAppUrl() } }
+            ],
+            [
+              { text: '📝 Open Question Practice (Prep)', web_app: { url: PREP_URL } }
+            ],
+            [
+              { text: '💰 View Packages & Discounts', callback_data: 'pricing' },
+              { text: '👥 Freshman Group', url: GROUP_URL }
+            ]
+          ]
+        }
+      }
+    );
+  }
 
   try {
     await ctx.reply(getStartMessage(username), {
@@ -1407,7 +1457,7 @@ bot.on('new_chat_members', async (ctx) => {
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '🚀 Launch Freshman Web App (Free)', url: `https://t.me/${botUsername}?startapp=group_welcome` }
+                { text: '🚀 Launch Freshman Web App (Free)', url: `https://t.me/${botUsername}?start=open_app` }
               ],
               [
                 { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
