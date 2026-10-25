@@ -92,24 +92,50 @@ async function setActiveDailyAd(adText) {
 async function sendDailyAdToGroup() {
   const adContent = await getActiveDailyAd();
   const botUsername = bot.botInfo?.username || 'CLNFreshmanCoursesBot';
-  return await bot.telegram.sendMessage(
-    GROUP_CHAT_ID,
-    adContent,
-    {
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '🚀 Launch CLN Freshman Web App (Free)', url: `https://t.me/${botUsername}?start=open_app` }
-          ],
-          [
-            { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
+  const targetChat = process.env.GROUP_CHAT_ID || GROUP_CHAT_ID || '@CLNfreshman444';
+
+  try {
+    return await bot.telegram.sendMessage(
+      targetChat,
+      adContent,
+      {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🚀 Launch CLN Freshman Web App (Free)', url: `https://t.me/${botUsername}?start=open_app` }
+            ],
+            [
+              { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
+            ]
           ]
-        ]
+        }
       }
+    );
+  } catch (err) {
+    if (targetChat !== '@CLNfreshman444') {
+      return await bot.telegram.sendMessage(
+        '@CLNfreshman444',
+        adContent,
+        {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '🚀 Launch CLN Freshman Web App (Free)', url: `https://t.me/${botUsername}?start=open_app` }
+              ],
+              [
+                { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
+              ]
+            ]
+          }
+        }
+      );
     }
-  );
+    throw err;
+  }
 }
 
 const getWebAppUrl = () => {
@@ -132,6 +158,61 @@ const supabase = createClient(
   SUPABASE_URL,
   SUPABASE_KEY
 );
+
+// ============================================================
+// AUTOMATIC MESSAGE DELETION ENGINE (3 MINUTES AUTO-CLEANUP)
+// ============================================================
+const pendingDeletions = [];
+
+function scheduleMessageDeletion(chatId, messageId, delayMs = 180000) {
+  const deleteAt = Date.now() + delayMs;
+  pendingDeletions.push({ chatId, messageId, deleteAt });
+
+  // 1. In-memory timer for immediate execution
+  setTimeout(async () => {
+    try {
+      await bot.telegram.deleteMessage(chatId, messageId);
+      console.log(`🗑️ Auto-deleted message ${messageId} in chat ${chatId} after 3 minutes.`);
+    } catch (_) {}
+  }, delayMs).unref();
+
+  // 2. Persist to cloud queue for guaranteed deletion across serverless runs
+  supabase.from('announcements').insert({
+    title: `auto_delete_${chatId}_${messageId}`,
+    category: 'system_auto_delete',
+    content: JSON.stringify({ chatId, messageId, deleteAt }),
+  }).catch(() => {});
+}
+
+async function processPendingDeletions() {
+  try {
+    const now = Date.now();
+    for (let i = pendingDeletions.length - 1; i >= 0; i--) {
+      const item = pendingDeletions[i];
+      if (item.deleteAt <= now) {
+        bot.telegram.deleteMessage(item.chatId, item.messageId).catch(() => {});
+        pendingDeletions.splice(i, 1);
+      }
+    }
+
+    const { data } = await supabase
+      .from('announcements')
+      .select('id, content')
+      .eq('category', 'system_auto_delete');
+
+    if (data && data.length > 0) {
+      for (const row of data) {
+        try {
+          const item = JSON.parse(row.content);
+          if (item.deleteAt <= now) {
+            await bot.telegram.deleteMessage(item.chatId, item.messageId).catch(() => {});
+            await supabase.from('announcements').delete().eq('id', row.id).catch(() => {});
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
 
 // Escape HTML for Telegram
 function escapeHtml(text) {
@@ -1442,7 +1523,7 @@ bot.on('new_chat_members', async (ctx) => {
       if (member.is_bot) continue;
 
       const name = member.first_name || 'Freshman';
-      await ctx.reply(
+      const welcomeMsg = await ctx.reply(
         `👋 <b>Welcome to CLN Freshman Community, ${escapeHtml(name)}! / እንኳን ደህና መጡ!</b> 🎓✨\n\n` +
         `Are you ready to ace your Freshman year and score a top GPA? 🚀\n\n` +
         `All your Addis Ababa University (AAU) freshman study materials are organized in one place inside our <b>Telegram Web App</b>:\n\n` +
@@ -1451,6 +1532,7 @@ bot.on('new_chat_members', async (ctx) => {
         `🎁 <b>Chapter 1 is 100% FREE</b> for every single course!\n` +
         `📝 <b>Midterm & Final Model Exams</b> with complete step-by-step solutions.\n` +
         `⚡ <b>Study anywhere, anytime</b> directly inside Telegram.\n\n` +
+        `<i>⏳ This message will auto-delete in 3 minutes to keep the group clean.</i>\n\n` +
         `👇 <b>Tap below to open the Web App and claim your free Chapter 1s:</b>`,
         {
           parse_mode: 'HTML',
@@ -1466,6 +1548,11 @@ bot.on('new_chat_members', async (ctx) => {
           }
         }
       ).catch((err) => console.warn('Could not send welcome message:', err.message));
+
+      // Auto-delete within 3 minutes (180,000 ms)
+      if (welcomeMsg && welcomeMsg.message_id) {
+        scheduleMessageDeletion(ctx.chat.id, welcomeMsg.message_id, 3 * 60 * 1000);
+      }
     }
   } catch (err) {
     console.warn('Error in new_chat_members:', err.message);
@@ -1488,7 +1575,7 @@ app.use(express.json());
 
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('Webhook received:', req.body.message?.text || 'No text');
+    processPendingDeletions().catch(() => {});
     await bot.handleUpdate(req.body);
     res.sendStatus(200);
   } catch (error) {
@@ -1597,6 +1684,7 @@ app.post('/api/broadcast', async (req, res) => {
 // Cron Endpoint for daily automated group advertisement
 app.all('/api/cron-daily-ad', async (req, res) => {
   try {
+    processPendingDeletions().catch(() => {});
     console.log('⏰ Executing scheduled daily group advertisement to @CLNfreshman444...');
     await sendDailyAdToGroup();
     return res.json({ success: true, message: 'Daily advertisement posted to @CLNfreshman444' });
