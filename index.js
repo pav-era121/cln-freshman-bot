@@ -1539,7 +1539,11 @@ app.post('/api/notify-approval', async (req, res) => {
 // API Endpoint for broadcasting from Web App Admin Dashboard or external calls
 app.post('/api/broadcast', async (req, res) => {
   const { title, content, secret } = req.body;
-  if (secret !== 'adminPass2026!' && secret !== '2026') {
+  const validSecrets = [
+    'Eyob@CLN2026#Admin',
+    process.env.ADMIN_SECRET || 'Eyob@CLN2026#Admin',
+  ];
+  if (!validSecrets.includes(secret)) {
     return res.status(401).json({ error: 'Unauthorized: Invalid admin secret' });
   }
   if (!content) {
