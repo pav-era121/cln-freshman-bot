@@ -31,6 +31,7 @@ const PREP_URL = 'https://cln-freshman-prep.vercel.app/';
 const GROUP_URL = 'https://t.me/CLNfreshman444';
 const ADMIN_USERNAME = 'CLN_AAU_Admin';
 const ADMIN_URL = 'https://t.me/CLN_AAU_Admin';
+const ADMIN_TELEGRAM_IDS = [5572599116, 6348965963];
 
 const getWebAppUrl = () => {
   const base = WEBAPP_URL.endsWith('/') ? WEBAPP_URL : `${WEBAPP_URL}/`;
@@ -1094,6 +1095,138 @@ bot.hears(['group', 'community', 'channel', 'ግሩፕ'], (ctx) => {
   });
 });
 
+// ============================================================
+// ADMIN BROADCAST & ADVERTISEMENT COMMANDS (/broadcast, /ad, /announce)
+// ============================================================
+bot.command(['broadcast', 'ad', 'announce'], async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (!ADMIN_TELEGRAM_IDS.includes(senderId)) {
+    return ctx.reply('⛔ <b>Access Denied:</b> This command is restricted to verified CLN Administrators.', {
+      parse_mode: 'HTML',
+    });
+  }
+
+  const fullText = ctx.message.text || '';
+  const messageContent = fullText.replace(/^\/(broadcast|ad|announce)\s*/i, '').trim();
+
+  if (!messageContent) {
+    return ctx.reply(
+      `📢 <b>CLN Broadcast & Advertisement System / ማስታወቂያ መላኪያ</b>\n\n` +
+      `Send a broadcast message or advertisement directly to every registered student in the bot database.\n\n` +
+      `<b>Usage:</b>\n<code>/broadcast [Your announcement or ad message here]</code>\n\n` +
+      `<b>Example:</b>\n<code>/broadcast 🎉 Big Update! New model exams and chapter notes for Economics, Global Affairs & Emerging Tech are now live on the Web App!</code>\n\n` +
+      `<i>Tip: HTML formatting like &lt;b&gt;bold&lt;/b&gt; and &lt;i&gt;italic&lt;/i&gt; is supported.</i>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  await ctx.reply('📡 <b>Initiating broadcast...</b> Fetching registered students from database...', { parse_mode: 'HTML' });
+
+  try {
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('telegram_id')
+      .not('telegram_id', 'is', null);
+
+    if (error || !users || users.length === 0) {
+      return ctx.reply(`❌ Could not fetch students: ${error?.message || 'No registered users found.'}`);
+    }
+
+    const uniqueIds = Array.from(new Set(users.map((u) => Number(u.telegram_id)).filter((id) => id > 0)));
+
+    await ctx.reply(
+      `🚀 Broadcasting to <b>${uniqueIds.length}</b> registered students...\nPlease hold on while messages are being delivered.`,
+      { parse_mode: 'HTML' }
+    );
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const tgId of uniqueIds) {
+      try {
+        await bot.telegram.sendMessage(
+          tgId,
+          `📢 <b>CLN Campus Announcement / ማስታወቂያ</b>\n\n${messageContent}`,
+          {
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '🚀 Open CLN Courses', web_app: { url: getWebAppUrl() } },
+                  { text: '👥 Freshman Group', url: GROUP_URL }
+                ]
+              ]
+            }
+          }
+        );
+        sent++;
+        await new Promise((r) => setTimeout(r, 45));
+      } catch (err) {
+        failed++;
+      }
+    }
+
+    await ctx.reply(
+      `✅ <b>Broadcast Completed! / ማስታወቂያው ተልኳል!</b>\n\n` +
+      `📬 Successfully delivered: <b>${sent}</b>\n` +
+      `⚠️ Blocked / Inactive: <b>${failed}</b>\n` +
+      `👥 Total targeted: <b>${uniqueIds.length}</b>`,
+      { parse_mode: 'HTML' }
+    );
+  } catch (err) {
+    console.error('Broadcast error:', err);
+    await ctx.reply(`❌ Broadcast failed with error: ${err.message}`);
+  }
+});
+
+// ============================================================
+// GROUP EVENT LISTENERS (@CLNfreshman444)
+// ============================================================
+bot.on('new_chat_members', async (ctx) => {
+  try {
+    const newMembers = ctx.message.new_chat_members || [];
+    for (const member of newMembers) {
+      if (member.is_bot) {
+        if (member.id === ctx.botInfo?.id) {
+          await ctx.reply(
+            `👋 <b>CLN Freshman Courses Bot is active in this group!</b>\n\n` +
+            `🎓 Welcome everyone! You can access all AAU Freshman course notes, Chapter 1 previews, and model exams right here.\n\n` +
+            `Click below to launch the Web App or view packages:`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '🚀 Open Courses Web App', url: `https://t.me/${ctx.botInfo.username}?startapp=group` }],
+                  [{ text: '💰 View Packages & Discounts', url: `https://t.me/${ctx.botInfo.username}?start=pricing` }]
+                ]
+              }
+            }
+          );
+        }
+        continue;
+      }
+
+      const name = member.first_name || 'Freshman';
+      await ctx.reply(
+        `👋 <b>Welcome to CLN Freshman Community, ${escapeHtml(name)}! / እንኳን ደህና መጡ!</b>\n\n` +
+        `📚 Access all AAU Freshman lecture summaries, Chapter 1 free previews, and model exams directly inside Telegram:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🚀 Open Courses Web App', url: `https://t.me/${ctx.botInfo.username}?startapp=welcome` }],
+              [{ text: '💰 Packages & Discounts', url: `https://t.me/${ctx.botInfo.username}?start=pricing` }]
+            ]
+          }
+        }
+      ).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('Error in new_chat_members:', err.message);
+  }
+});
+
 // Fallback message
 bot.on('text', (ctx) => {
   if (ctx.message.text.startsWith('/')) {
@@ -1155,6 +1288,60 @@ app.post('/api/notify-approval', async (req, res) => {
   } catch (err) {
     console.error('⚠️ Could not send Telegram DM to user:', err.message);
     return res.json({ success: false, reason: err.message });
+  }
+});
+
+// API Endpoint for broadcasting from Web App Admin Dashboard or external calls
+app.post('/api/broadcast', async (req, res) => {
+  const { title, content, secret } = req.body;
+  if (secret !== 'adminPass2026!' && secret !== '2026') {
+    return res.status(401).json({ error: 'Unauthorized: Invalid admin secret' });
+  }
+  if (!content) {
+    return res.status(400).json({ error: 'Missing content' });
+  }
+
+  try {
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('telegram_id')
+      .not('telegram_id', 'is', null);
+
+    if (error || !users) {
+      return res.status(500).json({ error: error?.message || 'Failed to fetch users' });
+    }
+
+    const uniqueIds = Array.from(new Set(users.map((u) => Number(u.telegram_id)).filter((id) => id > 0)));
+    let sent = 0;
+    let failed = 0;
+
+    const formattedMessage = `📢 <b>${escapeHtml(title || 'CLN Campus Announcement')}</b>\n\n${content}`;
+
+    for (const tgId of uniqueIds) {
+      try {
+        await bot.telegram.sendMessage(tgId, formattedMessage, {
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '🚀 Open CLN Courses', web_app: { url: getWebAppUrl() } },
+                { text: '👥 Freshman Group', url: GROUP_URL }
+              ]
+            ]
+          }
+        });
+        sent++;
+        await new Promise((r) => setTimeout(r, 45));
+      } catch (e) {
+        failed++;
+      }
+    }
+
+    return res.json({ success: true, sent, failed, total: uniqueIds.length });
+  } catch (err) {
+    console.error('API Broadcast error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
