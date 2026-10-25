@@ -374,8 +374,9 @@ const getAboutMessage = () => `💡 <b>WHAT IS CLN FRESHMAN TUTOR?</b>
   3. ⚛️ General Physics (PHYS 1011)
   4. 🗺️ Geography of Ethiopia and the Horn
   5. 💡 Logic & Critical Thinking
-  6. 📐 Mathematics for Natural / Social Science
-  7. 🏛️ Social Anthropology (ANTH 1012)
+  6. 📐 Mathematics for Natural Sciences
+  7. 📊 Mathematics for Social Sciences
+  8. 🏛️ Social Anthropology (ANTH 1012)
 
 🚀 <b>Two Integrated Platforms:</b>
 1. <b>Courses Web App</b>: Video lectures, summary handouts, and daily streak tracking.
