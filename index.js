@@ -34,70 +34,46 @@ const ADMIN_USERNAME = 'CLN_AAU_Admin';
 const ADMIN_URL = 'https://t.me/CLN_AAU_Admin';
 const PAM_TELEGRAM_ID = 5572599116; // Verified Owner PAM (@PAKMNJB) - EXCLUSIVE BROADCAST & AD PERMISSION
 
-const DEFAULT_DAILY_AD = `🔥 <b>STUDY SMARTER, NOT HARDER FOR YOUR FRESHMAN EXAMS! / በብልሃት አጥንተው ከፍተኛ GPA ያስመዝግቡ!</b> 🎓📖
-
-ፈተና ሊደርስ ጥቂት ቀናት ሲቀሩ መጨነቅ ይብቃ! የዩኒቨርሲቲን ፈተና በከፍተኛ ውጤት ለማለፍ የሚያስፈልጉዎትን ኖቶች እና የፈተና ጥያቄዎች በ <b>CLN Freshman Web App</b> ያግኙ።
-
-🌟 <b>ለምን በ CLN Freshman Web App ይጠቀማሉ?</b>
-✅ <b>13 ሙሉ ኮርሶች:</b> Psychology, Physics, Logic, Emerging Technology, Economics, Global Affairs, Entrepreneurship, Math, Anthropology, Physical Fitness & others.
-✅ <b>ምዕራፍ 1 በነፃ (100% FREE):</b> ሳይከፍሉ የሁሉንም ኮርሶች የመጀመሪያ ምዕራፍ ኖቶች ማንበብ ይችላሉ!
-✅ <b>ሞዴል ፈተናዎች ከነማብራሪያቸው:</b> ያለፉት ዓመታት የ Midterm እና Final ፈተናዎች ከተሟላ መልስ ጋር::
-✅ <b>ቀላል እና ፈጣን:</b> ያለምንም መቆራረጥ በስልክዎ ላይ በቀጥታ የሚሰራ::
-
-💡 <i>Join hundreds of freshmen already preparing for their top grades!</i>
-
-👇 <b>ከታች ያለውን ሊንክ በመጫን አሁኑኑ ነፃ ኖቶችን ማንበብ ይጀምሩ:</b>`;
+const {
+  AD_POOL,
+  getEthiopiaDateStr,
+  getAdRotationState,
+  saveAdRotationState,
+  selectNextDailyAd,
+  recordAdPosted,
+  setOneTimeManualAd,
+  clearManualAd,
+  getAdStatusSummary
+} = require('./adRotation');
 
 async function getActiveDailyAd() {
   try {
-    const { data } = await supabase
-      .from('announcements')
-      .select('content')
-      .eq('category', 'system_daily_ad')
-      .eq('title', 'cln_custom_group_ad')
-      .maybeSingle();
-    if (data && data.content && data.content.trim()) {
-      return data.content;
-    }
+    const state = await getAdRotationState(supabase);
+    const targetDate = getEthiopiaDateStr();
+    const selected = selectNextDailyAd(state, targetDate);
+    return selected.content;
   } catch (e) {
-    console.warn('Could not fetch custom daily ad:', e.message);
+    console.warn('Could not fetch active daily ad:', e.message);
   }
-  return DEFAULT_DAILY_AD;
+  return AD_POOL[0].content;
 }
 
 async function setActiveDailyAd(adText) {
-  const { data: existing } = await supabase
-    .from('announcements')
-    .select('id')
-    .eq('category', 'system_daily_ad')
-    .eq('title', 'cln_custom_group_ad')
-    .maybeSingle();
-  if (existing?.id) {
-    await supabase
-      .from('announcements')
-      .update({ content: adText, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-  } else {
-    await supabase
-      .from('announcements')
-      .insert({
-        title: 'cln_custom_group_ad',
-        content: adText,
-        category: 'system_daily_ad',
-        is_published: false
-      });
-  }
+  return await setOneTimeManualAd(supabase, adText);
 }
 
 async function sendDailyAdToGroup() {
-  const adContent = await getActiveDailyAd();
+  const state = await getAdRotationState(supabase);
+  const targetDate = getEthiopiaDateStr();
+  const selectedAd = selectNextDailyAd(state, targetDate);
   const botUsername = bot.botInfo?.username || 'CLNFreshmanCoursesBot';
   const targetChat = process.env.GROUP_CHAT_ID || GROUP_CHAT_ID || '@CLNfreshman444';
 
+  let sentMessage;
   try {
-    return await bot.telegram.sendMessage(
+    sentMessage = await bot.telegram.sendMessage(
       targetChat,
-      adContent,
+      selectedAd.content,
       {
         parse_mode: 'HTML',
         disable_web_page_preview: true,
@@ -115,9 +91,9 @@ async function sendDailyAdToGroup() {
     );
   } catch (err) {
     if (targetChat !== '@CLNfreshman444') {
-      return await bot.telegram.sendMessage(
+      sentMessage = await bot.telegram.sendMessage(
         '@CLNfreshman444',
-        adContent,
+        selectedAd.content,
         {
           parse_mode: 'HTML',
           disable_web_page_preview: true,
@@ -133,9 +109,16 @@ async function sendDailyAdToGroup() {
           }
         }
       );
+    } else {
+      throw err;
     }
-    throw err;
   }
+
+  // Once successfully delivered: record to history and revert manual ad if used
+  await recordAdPosted(supabase, state, selectedAd, targetDate);
+  console.log(`✅ Daily ad successfully delivered to ${targetChat} [${selectedAd.isManual ? 'MANUAL ONE-TIME' : 'AUTO ROTATION #' + selectedAd.adId}]`);
+
+  return { sentMessage, selectedAd };
 }
 
 const getWebAppUrl = () => {
@@ -1467,7 +1450,7 @@ bot.command(['broadcast', 'announce'], async (ctx) => {
   }
 });
 
-// Command for PAM to customize the daily advertisement message
+// Command for PAM to queue a one-time manual custom advertisement
 bot.command('set_ad', async (ctx) => {
   const senderId = Number(ctx.from?.id);
   if (senderId !== PAM_TELEGRAM_ID) {
@@ -1477,42 +1460,72 @@ bot.command('set_ad', async (ctx) => {
   const newText = (ctx.message.text || '').replace(/^\/set_ad\s*/i, '').trim();
   if (!newText) {
     return ctx.reply(
-      `✍️ <b>Customize Daily Group Advertisement</b>\n\n` +
-      `Set the custom advertisement text that the bot posts daily into the @CLNfreshman444 group.\n\n` +
+      `✍️ <b>Set One-Time Manual Group Advertisement</b>\n\n` +
+      `Set a custom advertisement to be posted on the next scheduled run. As soon as it is posted, the bot will <b>automatically revert to the 18-ad rotating schedule</b>!\n\n` +
       `<b>Usage:</b>\n<code>/set_ad [Your advertisement text here]</code>\n\n` +
-      `<b>Example:</b>\n<code>/set_ad 🔥 Midterm exams are approaching! Access all AAU Freshman Chapter 1 notes for FREE on the CLN Web App!</code>\n\n` +
+      `<b>Example:</b>\n<code>/set_ad 🔥 Big News! Brand new midterm model exams for Logic and Physics are now live on the Web App!</code>\n\n` +
       `<i>Tip: HTML tags like &lt;b&gt;bold&lt;/b&gt; and &lt;i&gt;italic&lt;/i&gt; are supported.</i>`,
       { parse_mode: 'HTML' }
     );
   }
 
   try {
-    await setActiveDailyAd(newText);
+    await setOneTimeManualAd(supabase, newText);
     await ctx.reply(
-      `✅ <b>Daily Group Advertisement Updated!</b>\n\n` +
-      `Preview your new ad with: /view_ad\n` +
-      `Post it immediately to the group with: /post_ad`,
+      `✅ <b>One-Time Manual Advertisement Queued!</b>\n\n` +
+      `This custom ad will be posted on the next scheduled post (or right now with /post_ad).\n\n` +
+      `🔄 <b>Automatic Reversion:</b> As soon as this ad is posted, the bot will automatically return to the rotating ad pool!\n\n` +
+      `• Preview it with: /view_ad\n` +
+      `• Post it now to @CLNfreshman444: /post_ad\n` +
+      `• Cancel and return to auto: /reset_ad`,
       { parse_mode: 'HTML' }
     );
   } catch (err) {
-    await ctx.reply(`❌ Failed to update ad: ${err.message}`);
+    await ctx.reply(`❌ Failed to set manual ad: ${err.message}`);
   }
 });
 
-// Command for PAM to preview active advertisement
-bot.command('view_ad', async (ctx) => {
+// Command for PAM to preview the next advertisement & rotation status
+bot.command(['view_ad', 'ad_status'], async (ctx) => {
   const senderId = Number(ctx.from?.id);
   if (senderId !== PAM_TELEGRAM_ID) {
     return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
   }
-  const ad = await getActiveDailyAd();
-  await ctx.reply(
-    `📋 <b>Current Active Group Advertisement:</b>\n\n${ad}\n\n` +
-    `<i>• To change it, type: /set_ad [New Text]\n` +
-    `• To post it now to @CLNfreshman444, type: /post_ad\n` +
-    `• To reset to default, type: /reset_ad</i>`,
-    { parse_mode: 'HTML' }
-  );
+
+  try {
+    const state = await getAdRotationState(supabase);
+    const summary = getAdStatusSummary(state);
+
+    if (summary.hasManualOverride) {
+      await ctx.reply(
+        `📋 <b>Current Ad Queue: MANUAL ONE-TIME OVERRIDE</b> ✍️\n\n` +
+        `<b>Pending Custom Ad (Next to be posted):</b>\n\n${summary.nextAd.content}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `🔄 <i>Behavior: This ad will be posted once, then the system automatically returns to the automatic rotation!</i>\n\n` +
+        `• Post it now: /post_ad\n` +
+        `• Cancel manual override: /reset_ad`,
+        { parse_mode: 'HTML', disable_web_page_preview: true }
+      );
+    } else {
+      await ctx.reply(
+        `📋 <b>Current Ad Queue: AUTOMATIC ROTATION</b> 🔄\n\n` +
+        `<b>Next Scheduled Ad:</b> #${summary.nextAd.adId} — <b>${summary.nextAd.title}</b>\n` +
+        `(Seen ${summary.nextAd.monthCount - 1}/2 times in ${summary.currentMonth})\n\n` +
+        `${summary.nextAd.content}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `📊 <b>Rotation Status (${summary.currentMonth}):</b>\n` +
+        `• Pool: <b>${summary.totalPoolSize} diverse ads</b>\n` +
+        `• Posts this month: <b>${summary.monthPostsCount}</b>\n` +
+        `• Rules: <b>Max 2 times/month • No consecutive repeats</b>\n\n` +
+        `• Post now: /post_ad\n` +
+        `• View full pool: /ad_stats\n` +
+        `• Set temporary custom ad: /set_ad [text]`,
+        { parse_mode: 'HTML', disable_web_page_preview: true }
+      );
+    }
+  } catch (err) {
+    await ctx.reply(`❌ Could not fetch ad status: ${err.message}`);
+  }
 });
 
 // Command for PAM to immediately post the advertisement into the group
@@ -1524,14 +1537,24 @@ bot.command('post_ad', async (ctx) => {
 
   try {
     await ctx.reply('📡 Posting advertisement to @CLNfreshman444...');
-    await sendDailyAdToGroup();
-    await ctx.reply('✅ <b>Advertisement successfully posted to @CLNfreshman444!</b>', { parse_mode: 'HTML' });
+    const result = await sendDailyAdToGroup();
+    const adInfo = result.selectedAd;
+    const modeDesc = adInfo.isManual
+      ? 'One-Time Custom Ad (Now reverted back to automatic rotation! 🔄)'
+      : `Ad #${adInfo.adId}: "${adInfo.title}" (Automatic Rotation)`;
+
+    await ctx.reply(
+      `✅ <b>Advertisement successfully posted to @CLNfreshman444!</b>\n\n` +
+      `📢 <b>Delivered:</b> ${modeDesc}\n\n` +
+      `Check the group to see it live, or use /view_ad to see what's scheduled next!`,
+      { parse_mode: 'HTML' }
+    );
   } catch (err) {
     await ctx.reply(`❌ Failed to post ad to group: ${err.message}`);
   }
 });
 
-// Command for PAM to reset advertisement to default
+// Command for PAM to reset advertisement to automatic rotation
 bot.command('reset_ad', async (ctx) => {
   const senderId = Number(ctx.from?.id);
   if (senderId !== PAM_TELEGRAM_ID) {
@@ -1539,10 +1562,48 @@ bot.command('reset_ad', async (ctx) => {
   }
 
   try {
-    await setActiveDailyAd(DEFAULT_DAILY_AD);
-    await ctx.reply('✅ Group advertisement has been reset to the default CLN motivating message!', { parse_mode: 'HTML' });
+    await clearManualAd(supabase);
+    const state = await getAdRotationState(supabase);
+    const summary = getAdStatusSummary(state);
+    await ctx.reply(
+      `✅ <b>Manual override cleared!</b>\n\n` +
+      `The bot is now in <b>Automatic Rotation</b> mode.\n` +
+      `Next scheduled ad: <b>Ad #${summary.nextAd.adId} — ${summary.nextAd.title}</b>`,
+      { parse_mode: 'HTML' }
+    );
   } catch (err) {
     await ctx.reply(`❌ Failed to reset ad: ${err.message}`);
+  }
+});
+
+// Command for PAM to inspect the entire 18-ad pool and monthly rotation stats
+bot.command(['ad_list', 'ad_stats'], async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
+  }
+
+  try {
+    const state = await getAdRotationState(supabase);
+    const summary = getAdStatusSummary(state);
+
+    let listText = `📊 <b>CLN Ad Rotation Pool (${summary.currentMonth})</b>\n\n`;
+    for (const ad of AD_POOL) {
+      const count = summary.usageCount[ad.id] || 0;
+      const statusIcon = count === 0 ? '⚪' : count === 1 ? '🟡' : '🟢';
+      const lastMark = state.lastPostedAdId === ad.id ? ' <i>(Last posted)</i>' : '';
+      listText += `${statusIcon} <b>#${ad.id}</b>: ${ad.title} — <b>${count}/2</b>${lastMark}\n`;
+    }
+
+    listText += `\n━━━━━━━━━━━━━━━━━━━━\n` +
+      `• Total posts this month: <b>${summary.monthPostsCount}</b>\n` +
+      `• Current mode: <b>${summary.hasManualOverride ? 'Manual Override Pending ✍️' : 'Automatic Rotation 🔄'}</b>\n` +
+      `• Next up: <b>${summary.nextAd.isManual ? 'Manual Post' : `Ad #${summary.nextAd.adId} (${summary.nextAd.title})`}</b>\n\n` +
+      `<i>Legend: ⚪ 0/2 used | 🟡 1/2 used | 🟢 2/2 used (capped for month)</i>`;
+
+    await ctx.reply(listText, { parse_mode: 'HTML' });
+  } catch (err) {
+    await ctx.reply(`❌ Failed to get ad stats: ${err.message}`);
   }
 });
 
@@ -1744,6 +1805,20 @@ bot.telegram.setMyCommands([
   { command: 'announcements', description: '📢 Campus Announcements' },
   { command: 'help', description: 'ℹ️ Bot Commands & Help' },
 ]).catch(err => console.warn('Could not setMyCommands:', err.message));
+
+// Register exclusive admin commands menu for PAM (@PAKMNJB)
+bot.telegram.setMyCommands([
+  { command: 'post_ad', description: '📢 Post next ad to group immediately' },
+  { command: 'view_ad', description: '📋 View next ad & rotation status' },
+  { command: 'set_ad', description: '✍️ Set one-time manual custom ad' },
+  { command: 'reset_ad', description: '🔄 Revert to automatic ad rotation' },
+  { command: 'ad_stats', description: '📊 View 18-ad monthly pool stats' },
+  { command: 'broadcast', description: '📡 Broadcast direct DM to all students' },
+  { command: 'start', description: '🏠 Main Portal & Menu' },
+  { command: 'open', description: '🚀 Open Courses Web App' }
+], {
+  scope: { type: 'chat', chat_id: PAM_TELEGRAM_ID }
+}).catch(err => console.warn('Could not setMyCommands for PAM:', err.message));
 
 // Health check endpoint
 app.get('/', (req, res) => {
