@@ -620,7 +620,7 @@ const getFaqMessage = () => `❓ <b>FREQUENTLY ASKED QUESTIONS (FAQ)</b>
 // It only runs automated actions (Welcome new members, post daily ads).
 bot.use(async (ctx, next) => {
   // 1. Allow new member join events to trigger the Welcome message
-  if (ctx.message?.new_chat_members) {
+  if (ctx.message?.new_chat_members || ctx.update?.chat_member) {
     return next();
   }
 
@@ -1608,52 +1608,117 @@ bot.command(['ad_list', 'ad_stats'], async (ctx) => {
 });
 
 // ============================================================
-// GROUP WELCOME EVENT LISTENER (@CLNfreshman444)
+// GROUP WELCOME EVENT LISTENER & AUTO-DELETION (@CLNfreshman444)
 // ============================================================
-// Welcomes new members warmly and motivates them to launch the Web App
+// Sends the chosen CLN Freshman welcome message and self-destructs after 3 minutes
+async function sendGroupWelcomeMessage(chatId, member, botUsername = 'CLNFreshmanCoursesBot') {
+  if (!member || member.is_bot) return;
+
+  const rawName = [member.first_name, member.last_name].filter(Boolean).join(' ') || member.username || 'Freshman';
+  const name = escapeHtml(rawName);
+
+  const welcomeText =
+`👋 Welcome to CLN Freshman Hub, ${name}! 🎓✨
+እንኳን ወደ ፍሬሽማን ማህበረሰብ በደህና መጡ!
+
+Your all-in-one companion for Addis Ababa University (AAU) freshman courses is ready for you:
+
+🎁 <b>YOUR WELCOME GIFT:</b>
+Chapter 1 for all 13 Courses is <b>100% FREE</b> to read right now!
+• 📚 Physics, Logic, Math, Psychology, Economics, Anthropology...
+• 📝 Midterm & Final past model exams with full step-by-step solutions
+• 🏆 Daily quiz challenges & GPA streak rewards
+
+👇 <b>Tap below to start reading your free notes:</b>
+
+🌱 <i>This message will be deleted after 3 minutes</i>`;
+
+  const inlineKeyboard = [
+    [
+      {
+        text: '🚀 Launch Web App & Claim Chapter 1',
+        url: `https://t.me/${botUsername}?start=open_app`
+      }
+    ],
+    [
+      {
+        text: '📝 Exam Practice Bank',
+        url: PREP_URL
+      }
+    ],
+    [
+      {
+        text: '💬 Ask Admin',
+        url: ADMIN_URL
+      }
+    ]
+  ];
+
+  try {
+    const welcomeMsg = await bot.telegram.sendMessage(chatId, welcomeText, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: inlineKeyboard
+      }
+    });
+
+    if (welcomeMsg && welcomeMsg.message_id) {
+      scheduleMessageDeletion(chatId, welcomeMsg.message_id, 3 * 60 * 1000);
+      console.log(`✨ Sent self-destructing welcome message to ${rawName} (${member.id}) in chat ${chatId}`);
+      return welcomeMsg;
+    }
+  } catch (err) {
+    console.warn(`Could not send welcome message to ${rawName} in ${chatId}:`, err.message);
+  }
+}
+
+// 1. Trigger when a member joins via service message (new_chat_members)
 bot.on('new_chat_members', async (ctx) => {
   try {
     const newMembers = ctx.message.new_chat_members || [];
     const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
 
     for (const member of newMembers) {
-      if (member.is_bot) continue;
-
-      const name = member.first_name || 'Freshman';
-      const welcomeMsg = await ctx.reply(
-        `👋 <b>Welcome to CLN Freshman Community, ${escapeHtml(name)}! / እንኳን ደህና መጡ!</b> 🎓✨\n\n` +
-        `Are you ready to ace your Freshman year and score a top GPA? 🚀\n\n` +
-        `All your Addis Ababa University (AAU) freshman study materials are organized in one place inside our <b>Telegram Web App</b>:\n\n` +
-        `📚 <b>All 13 Freshman Courses:</b>\n` +
-        `Psychology, Physics, Logic, Emerging Tech, Economics, Global Affairs, Entrepreneurship, Mathematics, Anthropology, and Physical Fitness.\n\n` +
-        `🎁 <b>Chapter 1 is 100% FREE</b> for every single course!\n` +
-        `📝 <b>Midterm & Final Model Exams</b> with complete step-by-step solutions.\n` +
-        `⚡ <b>Study anywhere, anytime</b> directly inside Telegram.\n\n` +
-        `<i>⏳ This message will auto-delete in 3 minutes to keep the group clean.</i>\n\n` +
-        `👇 <b>Tap below to open the Web App and claim your free Chapter 1s:</b>`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '🚀 Launch Freshman Web App (Free)', url: `https://t.me/${botUsername}?start=open_app` }
-              ],
-              [
-                { text: '💳 View Packages & Discounts', url: `https://t.me/${botUsername}?start=pricing` }
-              ]
-            ]
-          }
-        }
-      ).catch((err) => console.warn('Could not send welcome message:', err.message));
-
-      // Auto-delete within 3 minutes (180,000 ms)
-      if (welcomeMsg && welcomeMsg.message_id) {
-        scheduleMessageDeletion(ctx.chat.id, welcomeMsg.message_id, 3 * 60 * 1000);
-      }
+      await sendGroupWelcomeMessage(ctx.chat.id, member, botUsername);
     }
   } catch (err) {
-    console.warn('Error in new_chat_members:', err.message);
+    console.warn('Error in new_chat_members handler:', err.message);
   }
+});
+
+// 2. Trigger when a member joins via invite link or request (chat_member update)
+bot.on('chat_member', async (ctx) => {
+  try {
+    const update = ctx.update.chat_member;
+    if (!update) return;
+
+    const oldStatus = update.old_chat_member?.status;
+    const newStatus = update.new_chat_member?.status;
+    const user = update.new_chat_member?.user;
+
+    const isJoining =
+      (oldStatus === 'left' || oldStatus === 'kicked') &&
+      (newStatus === 'member' || newStatus === 'restricted');
+
+    if (isJoining && user && !user.is_bot) {
+      const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
+      await sendGroupWelcomeMessage(ctx.chat.id, user, botUsername);
+    }
+  } catch (err) {
+    console.warn('Error in chat_member handler:', err.message);
+  }
+});
+
+// 3. Test command for PAM to preview welcome message & 3-minute self-destruct
+bot.command('test_welcome', async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
+  }
+
+  const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
+  await sendGroupWelcomeMessage(ctx.chat.id, ctx.from, botUsername);
 });
 
 // Fallback message
@@ -1813,12 +1878,16 @@ bot.telegram.setMyCommands([
   { command: 'set_ad', description: '✍️ Set one-time manual custom ad' },
   { command: 'reset_ad', description: '🔄 Revert to automatic ad rotation' },
   { command: 'ad_stats', description: '📊 View 18-ad monthly pool stats' },
+  { command: 'test_welcome', description: '👋 Test 3-minute self-destruct welcome message' },
   { command: 'broadcast', description: '📡 Broadcast direct DM to all students' },
   { command: 'start', description: '🏠 Main Portal & Menu' },
   { command: 'open', description: '🚀 Open Courses Web App' }
 ], {
   scope: { type: 'chat', chat_id: PAM_TELEGRAM_ID }
 }).catch(err => console.warn('Could not setMyCommands for PAM:', err.message));
+
+// Periodic sweep for pending deletions (every 20s)
+setInterval(processPendingDeletions, 20000).unref();
 
 // Health check endpoint
 app.get('/', (req, res) => {
