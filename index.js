@@ -1674,17 +1674,25 @@ bot.command(['ad_list', 'ad_stats'], async (ctx) => {
 // GROUP WELCOME EVENT LISTENER & AUTO-DELETION (@CLNfreshman444)
 // ============================================================
 // Sends the chosen CLN Freshman welcome message and self-destructs after 1 minute
-async function sendGroupWelcomeMessage(chatId, member, botUsername = 'CLNFreshmanCoursesBot') {
+async function sendGroupWelcomeMessage(chatId, member, botUsername = 'CLNFreshmanCoursesBot', threadId = null) {
   if (!member || member.is_bot) return;
 
   // 1. Immediately wipe ANY previous welcome message in the group to prevent spam/annoyance
   await deletePreviousWelcomeMessages(chatId);
 
-  const rawName = [member.first_name, member.last_name].filter(Boolean).join(' ') || member.username || 'Freshman';
-  const name = escapeHtml(rawName);
+  const rawName = [member.first_name, member.last_name].filter(Boolean).join(' ') || (member.username ? `@${member.username}` : 'Freshman');
+  const safeName = escapeHtml(rawName);
+
+  // Direct interactive mention link to user's Telegram profile/account
+  // This causes Telegram to register an official 'text_mention' entity:
+  // 1. Tapping the name opens their Telegram account directly (just like Group Booster)
+  // 2. Mentions them so Telegram shows an @ badge and sends a direct notification, even across 20+ topics
+  const userMention = member.id
+    ? `<a href="tg://user?id=${member.id}"><b>${safeName}</b></a>`
+    : `<b>${safeName}</b>`;
 
   const welcomeText =
-`👋 Welcome to CLN Freshman Hub, ${name}! 🎓✨
+`👋 Welcome to CLN Freshman Hub, ${userMention}! 🎓✨
 እንኳን ወደ ፍሬሽማን ማህበረሰብ በደህና መጡ!
 
 Your all-in-one companion for Addis Ababa University (AAU) freshman courses is ready for you:
@@ -1721,13 +1729,18 @@ Chapter 1 for all 13 Courses is <b>100% FREE</b> to read right now!
   ];
 
   try {
-    const welcomeMsg = await bot.telegram.sendMessage(chatId, welcomeText, {
+    const sendOptions = {
       parse_mode: 'HTML',
       disable_web_page_preview: true,
       reply_markup: {
         inline_keyboard: inlineKeyboard
       }
-    });
+    };
+    if (threadId) {
+      sendOptions.message_thread_id = threadId;
+    }
+
+    const welcomeMsg = await bot.telegram.sendMessage(chatId, welcomeText, sendOptions);
 
     if (welcomeMsg && welcomeMsg.message_id) {
       activeWelcomeMessage = {
@@ -1767,9 +1780,10 @@ bot.on('new_chat_members', async (ctx) => {
   try {
     const newMembers = ctx.message.new_chat_members || [];
     const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
+    const threadId = ctx.message?.message_thread_id;
 
     for (const member of newMembers) {
-      await sendGroupWelcomeMessage(ctx.chat.id, member, botUsername);
+      await sendGroupWelcomeMessage(ctx.chat.id, member, botUsername, threadId);
     }
   } catch (err) {
     console.warn('Error in new_chat_members handler:', err.message);
@@ -1807,7 +1821,8 @@ bot.command('test_welcome', async (ctx) => {
   }
 
   const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
-  await sendGroupWelcomeMessage(ctx.chat.id, ctx.from, botUsername);
+  const threadId = ctx.message?.message_thread_id;
+  await sendGroupWelcomeMessage(ctx.chat.id, ctx.from, botUsername, threadId);
 });
 
 // 4. Instant purge command for PAM to clear any welcome messages right now
