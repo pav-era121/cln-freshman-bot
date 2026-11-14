@@ -2,6 +2,12 @@ const express = require('express');
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 const dotenv = require('dotenv');
+let waitUntil;
+try {
+  waitUntil = require('@vercel/functions').waitUntil;
+} catch (_) {
+  waitUntil = (p) => { if (p?.catch) p.catch(() => {}); };
+}
 
 dotenv.config();
 
@@ -143,39 +149,84 @@ const supabase = createClient(
 );
 
 // ============================================================
-// AUTOMATIC MESSAGE DELETION ENGINE (3 MINUTES AUTO-CLEANUP)
+// AUTOMATIC MESSAGE DELETION ENGINE (SELF-DESTRUCT & CLEANUP)
 // ============================================================
 const pendingDeletions = [];
+let activeWelcomeMessage = { chatId: null, messageId: null, sentAt: 0 };
 
-function scheduleMessageDeletion(chatId, messageId, delayMs = 180000) {
+async function deletePreviousWelcomeMessages(chatId) {
+  // 1. Delete in-memory recorded active message
+  if (activeWelcomeMessage.messageId && String(activeWelcomeMessage.chatId) === String(chatId)) {
+    try {
+      await bot.telegram.deleteMessage(chatId, activeWelcomeMessage.messageId);
+      console.log(`🗑️ Removed previous active welcome message ${activeWelcomeMessage.messageId}`);
+    } catch (_) {}
+    activeWelcomeMessage = { chatId: null, messageId: null, sentAt: 0 };
+  }
+
+  // 2. Also check any pending welcome messages in DB
+  try {
+    const { data } = await supabase
+      .from('announcements')
+      .select('id, content')
+      .eq('category', 'system_auto_delete');
+
+    if (data && data.length > 0) {
+      for (const row of data) {
+        try {
+          const item = JSON.parse(row.content);
+          if (String(item.chatId) === String(chatId)) {
+            await bot.telegram.deleteMessage(item.chatId, item.messageId).catch(() => {});
+            await supabase.from('announcements').delete().eq('id', row.id).catch(() => {});
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
+async function scheduleMessageDeletion(chatId, messageId, delayMs = 60000) {
   const deleteAt = Date.now() + delayMs;
   pendingDeletions.push({ chatId, messageId, deleteAt });
 
-  // 1. In-memory timer for immediate execution
+  // 1. In-memory timer for immediate execution (when continuous process is active)
   setTimeout(async () => {
     try {
       await bot.telegram.deleteMessage(chatId, messageId);
-      console.log(`🗑️ Auto-deleted message ${messageId} in chat ${chatId} after 3 minutes.`);
+      console.log(`🗑️ Auto-deleted message ${messageId} in chat ${chatId}`);
     } catch (_) {}
   }, delayMs).unref();
 
-  // 2. Persist to cloud queue for guaranteed deletion across serverless runs
-  supabase.from('announcements').insert({
-    title: `auto_delete_${chatId}_${messageId}`,
-    category: 'system_auto_delete',
-    content: JSON.stringify({ chatId, messageId, deleteAt }),
-  }).catch(() => {});
+  // 2. Persist to cloud queue with AWAIT for guaranteed deletion across serverless runs
+  try {
+    await supabase.from('announcements').upsert({
+      title: `auto_delete_${chatId}_${messageId}`,
+      category: 'system_auto_delete',
+      content: JSON.stringify({ chatId, messageId, deleteAt }),
+    }, { onConflict: 'title' });
+  } catch (err) {
+    console.warn('Could not save auto-delete queue to Supabase:', err.message);
+  }
 }
 
 async function processPendingDeletions() {
+  let count = 0;
   try {
     const now = Date.now();
     for (let i = pendingDeletions.length - 1; i >= 0; i--) {
       const item = pendingDeletions[i];
       if (item.deleteAt <= now) {
-        bot.telegram.deleteMessage(item.chatId, item.messageId).catch(() => {});
+        await bot.telegram.deleteMessage(item.chatId, item.messageId).catch(() => {});
         pendingDeletions.splice(i, 1);
+        count++;
       }
+    }
+
+    // Delete active welcome message if older than 60s
+    if (activeWelcomeMessage.messageId && activeWelcomeMessage.sentAt > 0 && now - activeWelcomeMessage.sentAt >= 60000) {
+      await bot.telegram.deleteMessage(activeWelcomeMessage.chatId, activeWelcomeMessage.messageId).catch(() => {});
+      activeWelcomeMessage = { chatId: null, messageId: null, sentAt: 0 };
+      count++;
     }
 
     const { data } = await supabase
@@ -190,11 +241,13 @@ async function processPendingDeletions() {
           if (item.deleteAt <= now) {
             await bot.telegram.deleteMessage(item.chatId, item.messageId).catch(() => {});
             await supabase.from('announcements').delete().eq('id', row.id).catch(() => {});
+            count++;
           }
         } catch (_) {}
       }
     }
   } catch (_) {}
+  return count;
 }
 
 // Escape HTML for Telegram
@@ -619,6 +672,9 @@ const getFaqMessage = () => `❓ <b>FREQUENTLY ASKED QUESTIONS (FAQ)</b>
 // The bot MUST NOT reply to user chatter, commands, or queries inside the group.
 // It only runs automated actions (Welcome new members, post daily ads).
 bot.use(async (ctx, next) => {
+  // Always trigger cleanup of any expired welcome messages on any update
+  processPendingDeletions().catch(() => {});
+
   // 1. Allow new member join events to trigger the Welcome message
   if (ctx.message?.new_chat_members || ctx.update?.chat_member) {
     return next();
@@ -627,6 +683,13 @@ bot.use(async (ctx, next) => {
   // 2. Check if update is in a group or supergroup
   const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
   if (isGroup) {
+    // If active welcome message is in this group and older than 60s, delete it!
+    if (activeWelcomeMessage.messageId && activeWelcomeMessage.sentAt > 0 && Date.now() - activeWelcomeMessage.sentAt >= 60000) {
+      const msgId = activeWelcomeMessage.messageId;
+      activeWelcomeMessage = { chatId: null, messageId: null, sentAt: 0 };
+      bot.telegram.deleteMessage(ctx.chat.id, msgId).catch(() => {});
+    }
+
     const senderId = Number(ctx.from?.id);
     // If a user types a command in the group
     if (ctx.message?.text?.startsWith('/')) {
@@ -1610,9 +1673,12 @@ bot.command(['ad_list', 'ad_stats'], async (ctx) => {
 // ============================================================
 // GROUP WELCOME EVENT LISTENER & AUTO-DELETION (@CLNfreshman444)
 // ============================================================
-// Sends the chosen CLN Freshman welcome message and self-destructs after 3 minutes
+// Sends the chosen CLN Freshman welcome message and self-destructs after 1 minute
 async function sendGroupWelcomeMessage(chatId, member, botUsername = 'CLNFreshmanCoursesBot') {
   if (!member || member.is_bot) return;
+
+  // 1. Immediately wipe ANY previous welcome message in the group to prevent spam/annoyance
+  await deletePreviousWelcomeMessages(chatId);
 
   const rawName = [member.first_name, member.last_name].filter(Boolean).join(' ') || member.username || 'Freshman';
   const name = escapeHtml(rawName);
@@ -1631,7 +1697,7 @@ Chapter 1 for all 13 Courses is <b>100% FREE</b> to read right now!
 
 👇 <b>Tap below to start reading your free notes:</b>
 
-🌱 <i>This message will be deleted after 3 minutes</i>`;
+🌱 <i>This message will be deleted after 1 minute</i>`;
 
   const inlineKeyboard = [
     [
@@ -1664,8 +1730,31 @@ Chapter 1 for all 13 Courses is <b>100% FREE</b> to read right now!
     });
 
     if (welcomeMsg && welcomeMsg.message_id) {
-      scheduleMessageDeletion(chatId, welcomeMsg.message_id, 3 * 60 * 1000);
+      activeWelcomeMessage = {
+        chatId,
+        messageId: welcomeMsg.message_id,
+        sentAt: Date.now()
+      };
+
       console.log(`✨ Sent self-destructing welcome message to ${rawName} (${member.id}) in chat ${chatId}`);
+
+      // 1. Persist to Supabase queue (await to ensure it is written before function ends)
+      await scheduleMessageDeletion(chatId, welcomeMsg.message_id, 60 * 1000);
+
+      // 2. Multi-layer guarantee: use @vercel/functions waitUntil to execute deletion at 60s
+      if (typeof waitUntil === 'function') {
+        waitUntil((async () => {
+          try {
+            await new Promise((r) => setTimeout(r, 60000));
+            await bot.telegram.deleteMessage(chatId, welcomeMsg.message_id);
+            console.log(`🗑️ Auto-deleted welcome message ${welcomeMsg.message_id} via waitUntil after 1 minute.`);
+            if (activeWelcomeMessage.messageId === welcomeMsg.message_id) {
+              activeWelcomeMessage = { chatId: null, messageId: null, sentAt: 0 };
+            }
+          } catch (_) {}
+        })());
+      }
+
       return welcomeMsg;
     }
   } catch (err) {
@@ -1710,7 +1799,7 @@ bot.on('chat_member', async (ctx) => {
   }
 });
 
-// 3. Test command for PAM to preview welcome message & 3-minute self-destruct
+// 3. Test command for PAM to preview welcome message & 1-minute self-destruct
 bot.command('test_welcome', async (ctx) => {
   const senderId = Number(ctx.from?.id);
   if (senderId !== PAM_TELEGRAM_ID) {
@@ -1719,6 +1808,18 @@ bot.command('test_welcome', async (ctx) => {
 
   const botUsername = ctx.botInfo?.username || 'CLNFreshmanCoursesBot';
   await sendGroupWelcomeMessage(ctx.chat.id, ctx.from, botUsername);
+});
+
+// 4. Instant purge command for PAM to clear any welcome messages right now
+bot.command('clear_welcome', async (ctx) => {
+  const senderId = Number(ctx.from?.id);
+  if (senderId !== PAM_TELEGRAM_ID) {
+    return ctx.reply('⛔ Access Denied.', { parse_mode: 'HTML' });
+  }
+
+  const targetChat = ctx.chat.type === 'private' ? GROUP_CHAT_ID : ctx.chat.id;
+  await deletePreviousWelcomeMessages(targetChat);
+  await ctx.reply('🧹 All welcome messages in group cleared successfully!', { parse_mode: 'HTML' });
 });
 
 // Fallback message
@@ -1743,6 +1844,16 @@ app.post('/webhook', async (req, res) => {
   } catch (error) {
     console.error('Error handling webhook:', error);
     res.sendStatus(500);
+  }
+});
+
+// Dedicated endpoint to sweep and delete any expired welcome messages
+app.all(['/api/cleanup-messages', '/api/cleanup'], async (req, res) => {
+  try {
+    const count = await processPendingDeletions();
+    return res.json({ success: true, deleted: count });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -1878,7 +1989,8 @@ bot.telegram.setMyCommands([
   { command: 'set_ad', description: '✍️ Set one-time manual custom ad' },
   { command: 'reset_ad', description: '🔄 Revert to automatic ad rotation' },
   { command: 'ad_stats', description: '📊 View 18-ad monthly pool stats' },
-  { command: 'test_welcome', description: '👋 Test 3-minute self-destruct welcome message' },
+  { command: 'test_welcome', description: '👋 Test 1-minute self-destruct welcome message' },
+  { command: 'clear_welcome', description: '🧹 Instantly delete all welcome messages in group' },
   { command: 'broadcast', description: '📡 Broadcast direct DM to all students' },
   { command: 'start', description: '🏠 Main Portal & Menu' },
   { command: 'open', description: '🚀 Open Courses Web App' }
